@@ -17,8 +17,72 @@ const { exec: execCb } = require('child_process');
 
 const PORT = parseInt(process.env.PORT || '3456');
 const SESSIONS_DIR = process.env.SESSIONS_DIR || path.join(process.env.HOME, '.openclaw', 'agents');
+const EDGE_SIGNALS_FILE = process.env.EDGE_SIGNALS || path.join(process.env.HOME, 'clawd', 'polymarket-15min', 'dexter', 'data', 'edge_signals.jsonl');
 const MAX_EVENTS = 200;
 const DASHBOARD_INTERVAL = 60000;
+
+// === NEWS TICKER (Dexter Signal Intelligence) ===
+const tickerItems = [];
+const MAX_TICKER = 30;
+
+function loadEdgeSignals() {
+  try {
+    const data = fs.readFileSync(EDGE_SIGNALS_FILE, 'utf8');
+    const lines = data.trim().split('\n').filter(Boolean);
+    for (const line of lines.slice(-MAX_TICKER)) {
+      try {
+        const sig = JSON.parse(line);
+        const item = {
+          source: sig.trigger_source || 'dexter',
+          severity: Math.round((sig.confidence || 30) / 10),
+          headline: sig.trigger_title || sig.question || 'Unknown signal',
+          market: sig.question || null,
+          direction: sig.direction || null,
+          price: sig.market_price || null,
+          ts: sig.timestamp || new Date().toISOString()
+        };
+        tickerItems.push(item);
+      } catch {}
+    }
+    console.log(`  📰 Loaded ${tickerItems.length} signal headlines`);
+  } catch { console.log('  📰 No edge signals file found, ticker empty until POST /api/ticker'); }
+}
+loadEdgeSignals();
+
+// Watch for new signals appended to the file
+try {
+  let tickerOffset = 0;
+  try { tickerOffset = fs.statSync(EDGE_SIGNALS_FILE).size; } catch {}
+  fs.watch(EDGE_SIGNALS_FILE, () => {
+    try {
+      const stat = fs.statSync(EDGE_SIGNALS_FILE);
+      if (stat.size <= tickerOffset) return;
+      const fd = fs.openSync(EDGE_SIGNALS_FILE, 'r');
+      const buf = Buffer.alloc(stat.size - tickerOffset);
+      fs.readSync(fd, buf, 0, buf.length, tickerOffset);
+      fs.closeSync(fd);
+      tickerOffset = stat.size;
+      const newLines = buf.toString('utf8').trim().split('\n').filter(Boolean);
+      for (const line of newLines) {
+        try {
+          const sig = JSON.parse(line);
+          const item = {
+            source: sig.trigger_source || 'dexter',
+            severity: Math.round((sig.confidence || 30) / 10),
+            headline: sig.trigger_title || sig.question || 'Unknown signal',
+            market: sig.question || null,
+            direction: sig.direction || null,
+            price: sig.market_price || null,
+            ts: sig.timestamp || new Date().toISOString()
+          };
+          tickerItems.push(item);
+          if (tickerItems.length > MAX_TICKER) tickerItems.shift();
+          bus.emit('ticker', tickerItems);
+        } catch {}
+      }
+    } catch {}
+  });
+} catch {}
 
 const bus = new EventEmitter();
 bus.setMaxListeners(50);
@@ -176,8 +240,11 @@ function parseMessage(line, channel) {
     // Skip NO_REPLY, HEARTBEAT_OK, and internal runtime events
     if (/^(NO_REPLY|HEARTBEAT_OK)$/i.test(text.trim())) return null;
     if (/OpenClaw runtime context|^\[.*?\] OpenClaw|Internal task completion|runtime-generated.*not user-authored/i.test(text)) return null;
-    // Skip heartbeat prompts, metadata-only messages
+    // Skip heartbeat prompts, metadata-only messages, cron triggers
     if (/^Read HEARTBEAT\.md|^\[.*GMT.*\]\s*$/i.test(text.trim())) return null;
+    if (/^\[cron:[0-9a-f-]+/.test(text.trim())) return null;
+    if (/^Note: The previous agent run was aborted/.test(text.trim())) return null;
+    if (/^Your previous response was only an acknowledgement/.test(text.trim())) return null;
     // Skip messages that are just empty after context stripping
     if (text.replace(/[\s\n]/g, '').length < 3) return null;
 
@@ -248,7 +315,30 @@ function readNewData(filePath, channel) {
 
 function tailFile(filePath) {
   const channel = inferChannel(filePath);
-  try { fileOffsets.set(filePath, fs.statSync(filePath).size); } catch { fileOffsets.set(filePath, 0); }
+  // Read last ~32KB of file to seed recent messages, then tail from end
+  try {
+    const stat = fs.statSync(filePath);
+    const SEED_BYTES = 32768;
+    const seedStart = Math.max(0, stat.size - SEED_BYTES);
+    const fd = fs.openSync(filePath, 'r');
+    const buf = Buffer.alloc(stat.size - seedStart);
+    fs.readSync(fd, buf, 0, buf.length, seedStart);
+    fs.closeSync(fd);
+    const chunk = buf.toString('utf8');
+    // If we started mid-file, skip the first (possibly partial) line
+    const lines = chunk.split('\n').filter(Boolean);
+    const startIdx = seedStart > 0 ? 1 : 0;
+    let seeded = 0;
+    for (let i = startIdx; i < lines.length; i++) {
+      const evt = parseMessage(lines[i], channel);
+      if (evt && evt.primary) {
+        recentEvents.push(evt);
+        if (recentEvents.length > MAX_EVENTS) recentEvents.shift();
+        seeded++;
+      }
+    }
+    fileOffsets.set(filePath, stat.size);
+  } catch { fileOffsets.set(filePath, 0); }
   const watcher = fs.watch(filePath, (eventType) => {
     if (eventType !== 'change') return;
     readNewData(filePath, channel);
@@ -305,6 +395,7 @@ const server = http.createServer((req, res) => {
     // Send initial state
     res.write(`event: emotion\ndata: ${JSON.stringify({ emotion: petEmotion })}\n\n`);
     if (dashboardData) res.write(`event: dashboard\ndata: ${JSON.stringify(dashboardData)}\n\n`);
+    if (tickerItems.length > 0) res.write(`event: ticker\ndata: ${JSON.stringify(tickerItems)}\n\n`);
     // Replay last 50 events (keeps feed populated even after quiet periods)
     const fresh = recentEvents.slice(-50);
     for (const evt of fresh) { sseSeq++; res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); }
@@ -312,15 +403,44 @@ const server = http.createServer((req, res) => {
     const h1 = (evt) => { sseSeq++; try { res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); } catch {} };
     const h2 = (d) => { try { res.write(`event: dashboard\ndata: ${JSON.stringify(d)}\n\n`); } catch {} };
     const h3 = (d) => { try { res.write(`event: emotion\ndata: ${JSON.stringify(d)}\n\n`); } catch {} };
-    bus.on('event', h1); bus.on('dashboard', h2); bus.on('emotion', h3);
+    const h4 = (d) => { try { res.write(`event: ticker\ndata: ${JSON.stringify(d)}\n\n`); } catch {} };
+    bus.on('event', h1); bus.on('dashboard', h2); bus.on('emotion', h3); bus.on('ticker', h4);
     const ka = setInterval(() => { try { res.write(`: ka\n\n`); } catch { clearInterval(ka); } }, 10000);
-    req.on('close', () => { bus.off('event', h1); bus.off('dashboard', h2); bus.off('emotion', h3); clearInterval(ka); });
+    req.on('close', () => { bus.off('event', h1); bus.off('dashboard', h2); bus.off('emotion', h3); bus.off('ticker', h4); clearInterval(ka); });
     return;
   }
 
   if (url.pathname === '/health') {
     res.writeHead(200, { ...NO_CACHE, 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, watching: watchers.size, buffered: recentEvents.length, emotion: petEmotion }));
+    res.end(JSON.stringify({ ok: true, watching: watchers.size, buffered: recentEvents.length, ticker: tickerItems.length, emotion: petEmotion }));
+    return;
+  }
+
+  // GET /api/ticker - return current ticker items
+  if (url.pathname === '/api/ticker' && req.method === 'GET') {
+    res.writeHead(200, { ...NO_CACHE, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(tickerItems));
+    return;
+  }
+
+  // POST /api/ticker - push a new ticker item
+  if (url.pathname === '/api/ticker' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      try {
+        const item = JSON.parse(body);
+        if (!item.headline) { res.writeHead(400); res.end('{"error":"headline required"}'); return; }
+        item.ts = item.ts || new Date().toISOString();
+        item.severity = item.severity || 5;
+        item.source = item.source || 'manual';
+        tickerItems.push(item);
+        if (tickerItems.length > MAX_TICKER) tickerItems.shift();
+        bus.emit('ticker', tickerItems);
+        res.writeHead(200, { ...NO_CACHE, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, count: tickerItems.length }));
+      } catch { res.writeHead(400); res.end('{"error":"invalid json"}'); }
+    });
     return;
   }
 
@@ -384,9 +504,9 @@ const HTML = `<!DOCTYPE html>
   }
   #topRight .title { color: #33ff33; font-size: 14px; letter-spacing: 2px; }
 
-  /* ===== PET: bottom-left ===== */
+  /* ===== PET: bottom-left, above ticker ===== */
   #petContainer {
-    position: fixed; bottom: 16px; left: 16px;
+    position: fixed; bottom: 52px; left: 16px;
     width: 120px; display: flex; flex-direction: column;
     align-items: center; justify-content: flex-end;
   }
@@ -430,7 +550,7 @@ const HTML = `<!DOCTYPE html>
 
   /* ===== FEED: bottom-right, mixed terminal lines + iOS bubbles ===== */
   #feed {
-    position: fixed; bottom: 16px; right: 16px;
+    position: fixed; bottom: 52px; right: 16px;
     width: 52%; max-height: 80vh;
     display: flex; flex-direction: column;
     overflow-y: auto; overflow-x: hidden;
@@ -547,6 +667,100 @@ const HTML = `<!DOCTYPE html>
   /* Fading for old entries */
   .fading { opacity: 0.15; transition: opacity 5s ease-out; }
 
+  /* ===== BREAKING NEWS TICKER ===== */
+  #tickerBar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    height: 36px; z-index: 90;
+    display: flex; align-items: stretch;
+    font-family: 'Share Tech Mono', 'Courier New', monospace;
+    overflow: hidden;
+  }
+  #tickerLabel {
+    background: #cc0000;
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+    padding: 0 14px;
+    display: flex; align-items: center;
+    white-space: nowrap;
+    text-shadow: 0 0 4px rgba(255,0,0,0.5);
+    flex-shrink: 0;
+    z-index: 2;
+  }
+  #tickerLabel .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    background: #ff3333;
+    border-radius: 50%;
+    margin-right: 8px;
+    animation: dotPulse 1.5s ease-in-out infinite;
+    box-shadow: 0 0 6px rgba(255,50,50,0.8);
+  }
+  @keyframes dotPulse { 0%,100%{opacity:1;box-shadow:0 0 6px rgba(255,50,50,0.8)} 50%{opacity:0.4;box-shadow:0 0 2px rgba(255,50,50,0.3)} }
+
+  #tickerTrack {
+    flex: 1;
+    background: rgba(0,0,0,0.85);
+    border-top: 1px solid #cc0000;
+    overflow: hidden;
+    position: relative;
+  }
+  #tickerContent {
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    white-space: nowrap;
+    animation: tickerScroll var(--ticker-duration, 60s) linear infinite;
+    padding-left: 100%;
+  }
+  @keyframes tickerScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-100%); }
+  }
+  #tickerContent:hover { animation-play-state: paused; }
+
+  .ticker-item {
+    display: inline-flex;
+    align-items: center;
+    padding: 0 32px 0 0;
+    height: 100%;
+    font-size: 13px;
+    color: #33ff33;
+  }
+  .ticker-item .ti-sev {
+    color: #cc0000;
+    font-size: 10px;
+    margin-right: 6px;
+    letter-spacing: 0.5px;
+  }
+  .ticker-item .ti-src {
+    color: #1a8c1a;
+    margin-right: 8px;
+    font-size: 11px;
+  }
+  .ticker-item .ti-headline {
+    color: #33ff33;
+  }
+  .ticker-item .ti-market {
+    color: #0af;
+    margin-left: 8px;
+    font-size: 11px;
+  }
+  .ticker-item .ti-sep {
+    color: #cc0000;
+    margin: 0 16px;
+    font-size: 16px;
+  }
+  .ticker-empty {
+    color: #1a6e1a;
+    font-size: 12px;
+    padding: 0 20px;
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+  }
+
   /* CRT scanlines */
   #crt {
     position:fixed; inset:0; pointer-events:none; z-index:100;
@@ -573,6 +787,12 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <div id="feed"><div id="feedInner"></div></div>
+
+<div id="tickerBar">
+  <div id="tickerLabel"><span class="dot"></span>DEXTER SIGNAL INTEL</div>
+  <div id="tickerTrack"><div id="tickerContent"><span class="ticker-empty">AWAITING SIGNALS...</span></div></div>
+</div>
+
 <div id="crt"></div>
 
 <script>
@@ -814,6 +1034,53 @@ setInterval(() => {
   document.getElementById('petUptime').textContent = 'UP ' + (m<60 ? m+'M' : Math.floor(m/60)+'H'+(m%60)+'M');
 }, 5000);
 
+// ===== NEWS TICKER =====
+function updateTicker(items) {
+  var tc = document.getElementById('tickerContent');
+  if (!items || items.length === 0) {
+    tc.innerHTML = '<span class="ticker-empty">AWAITING SIGNALS...</span>';
+    return;
+  }
+  var html = '';
+  // Double the items for seamless loop
+  var all = items.concat(items);
+  for (var i = 0; i < all.length; i++) {
+    var it = all[i];
+    var sevStr = '';
+    var sev = it.severity || 5;
+    if (sev >= 8) sevStr = 'CRITICAL';
+    else if (sev >= 6) sevStr = 'HIGH';
+    else if (sev >= 4) sevStr = 'MEDIUM';
+    else sevStr = 'LOW';
+
+    var src = it.source || '';
+    if (src.indexOf('/') >= 0) src = src.substring(src.indexOf('/') + 1);
+    if (src.length > 20) src = src.substring(0, 20);
+
+    html += '<span class="ticker-item">';
+    html += '<span class="ti-sev">[' + sevStr + ']</span>';
+    if (src) html += '<span class="ti-src">' + esc(src) + '</span>';
+    html += '<span class="ti-headline">' + esc(it.headline || '') + '</span>';
+    if (it.market) {
+      var mkt = it.market;
+      if (mkt.length > 50) mkt = mkt.substring(0, 47) + '...';
+      var dirStr = it.direction ? ' ' + it.direction : '';
+      var priceStr = it.price ? ' @ ' + (it.price * 100).toFixed(0) + '%' : '';
+      html += '<span class="ti-market">' + esc(mkt) + dirStr + priceStr + '</span>';
+    }
+    html += '<span class="ti-sep">///</span>';
+    html += '</span>';
+  }
+  tc.innerHTML = html;
+  // Adjust scroll speed based on content: ~80px/sec
+  var dur = Math.max(30, items.length * 5);
+  tc.style.setProperty('--ticker-duration', dur + 's');
+  // Reset animation
+  tc.style.animation = 'none';
+  tc.offsetHeight;
+  tc.style.animation = '';
+}
+
 // ===== SSE with reconnect =====
 let reconnectDelay = 1000;
 let heartbeatTimer = null;
@@ -839,6 +1106,7 @@ function connect() {
   es.onmessage = (e) => { resetHeartbeat(); try{addEntry(JSON.parse(e.data));}catch{} };
   es.addEventListener('dashboard', (e) => { resetHeartbeat(); try{updateDash(JSON.parse(e.data));}catch{} });
   es.addEventListener('emotion', (e) => { resetHeartbeat(); try{setPet(JSON.parse(e.data).emotion);}catch{} });
+  es.addEventListener('ticker', (e) => { resetHeartbeat(); try{updateTicker(JSON.parse(e.data));}catch{} });
   es.onerror = () => {
     document.getElementById('connStatus').textContent = 'RECONNECTING';
     document.getElementById('connStatus').style.color = '#ff5555';
