@@ -107,14 +107,22 @@ function parseMessage(line, channel) {
     const hasText = textParts.length > 0;
     const hasToolCall = toolParts.length > 0;
 
-    // Primary = user or assistant with actual text content (toolCalls alongside text are still primary)
-    const isPrimary = (role === 'user' || role === 'assistant') && hasText;
+    // Primary logic:
+    // - user messages with text: always primary (after stripping context wrappers)
+    // - assistant messages: DEFERRED. We buffer the last one and only promote to primary
+    //   when we see the next user message (meaning the turn ended). This filters out
+    //   narration between tool calls ("Let me check...", "Now update...").
+    //   See: isPrimary is set here but assistant messages get overridden by the deferred system.
+    const isPrimary = (role === 'user') && hasText;
+    // Assistant messages with text but no tools get tagged as 'assistant-candidate'
+    // The tail watcher will handle promotion.
+    const isAssistantCandidate = (role === 'assistant') && hasText && !hasToolCall;
 
     let text;
-    if (isPrimary) {
+    if (isPrimary || isAssistantCandidate) {
+      // Preserve formatting (may become a bubble)
       text = textParts.join('\n');
       if (role === 'user') text = stripContextWrappers(text);
-      // Preserve newlines for display - just collapse multiple blanks
       text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     } else if (hasToolCall) {
       text = toolParts.join(', ');
@@ -133,10 +141,11 @@ function parseMessage(line, channel) {
     // Skip messages that are just empty after context stripping
     if (text.replace(/[\s\n]/g, '').length < 3) return null;
 
-    if (!isPrimary && text.length > 120) text = text.slice(0, 117) + '...';
+    // Don't truncate candidates (they may get promoted to bubbles)
+    if (!isPrimary && !isAssistantCandidate && text.length > 120) text = text.slice(0, 117) + '...';
 
     let sentiment = null;
-    if (isPrimary) {
+    if (isPrimary || isAssistantCandidate) {
       sentiment = analyzeSentiment(text, role);
       petEmotion = sentiment;
       petEmotionTs = Date.now();
@@ -156,12 +165,33 @@ function parseMessage(line, channel) {
       }
     }
 
-    return { id: entry.id || Math.random().toString(36).slice(2), channel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, sentiment, threadLabel };
+    return { id: entry.id || Math.random().toString(36).slice(2), channel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, assistantCandidate: isAssistantCandidate, sentiment, threadLabel };
   } catch { return null; }
 }
 
 const fileOffsets = new Map();
 const watchers = new Map();
+
+// Per-channel buffer for deferred assistant message promotion
+// Key: channel, Value: { evt, timer }
+const pendingAssistant = new Map();
+const PROMOTE_DELAY_MS = 4000; // If no toolResult arrives within 4s, promote to bubble
+
+function emitEvent(evt) {
+  recentEvents.push(evt);
+  if (recentEvents.length > MAX_EVENTS) recentEvents.shift();
+  bus.emit('event', evt);
+}
+
+function promotePending(channel) {
+  const pending = pendingAssistant.get(channel);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pending.evt.primary = true;
+  pending.evt.sentiment = null; // will be set client-side
+  emitEvent(pending.evt);
+  pendingAssistant.delete(channel);
+}
 
 function tailFile(filePath) {
   const channel = inferChannel(filePath);
@@ -177,9 +207,40 @@ function tailFile(filePath) {
     stream.on('data', (chunk) => { buffer += chunk; });
     stream.on('end', () => {
       fileOffsets.set(filePath, stat.size);
-      for (const line of buffer.split('\n').filter(Boolean)) {
+      const lines = buffer.split('\n').filter(Boolean);
+      for (const line of lines) {
         const evt = parseMessage(line, channel);
-        if (evt) { recentEvents.push(evt); if (recentEvents.length > MAX_EVENTS) recentEvents.shift(); bus.emit('event', evt); }
+        if (!evt) continue;
+
+        if (evt.primary) {
+          // User message arrived: promote any pending assistant message first
+          promotePending(channel);
+          emitEvent(evt);
+        } else if (evt.assistantCandidate) {
+          // Assistant text-only message. Buffer it; only promote if turn ends.
+          // Replace any existing pending (keep only the latest).
+          const old = pendingAssistant.get(channel);
+          if (old) {
+            clearTimeout(old.timer);
+            // Emit the old one as non-primary (terminal line)
+            old.evt.primary = false;
+            emitEvent(old.evt);
+          }
+          const timer = setTimeout(() => promotePending(channel), PROMOTE_DELAY_MS);
+          pendingAssistant.set(channel, { evt, timer });
+        } else if (evt.role === 'tool-result') {
+          // Tool result: the pending assistant message was narration, emit as terminal
+          const pending = pendingAssistant.get(channel);
+          if (pending) {
+            clearTimeout(pending.timer);
+            pending.evt.primary = false;
+            emitEvent(pending.evt);
+            pendingAssistant.delete(channel);
+          }
+          emitEvent(evt);
+        } else {
+          emitEvent(evt);
+        }
       }
     });
   });
@@ -539,20 +600,20 @@ function md(raw) {
   const icRe = new RegExp('\x60([^\x60\\n]+)\x60', 'g');
   s = s.replace(icRe, '<code class="md-code">$1</code>');
   // Bold: **text** or __text__
-  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/[*][*](.+?)[*][*]/g, '<strong>$1</strong>');
   s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
-  // Italic: *text* or _text_ (but not inside words with underscores)
-  s = s.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '<em>$1</em>');
+  // Italic: *text* (after bold replaced, remaining single *)
+  s = s.replace(/[*]([^*]+)[*]/g, '<em>$1</em>');
   // Strikethrough: ~~text~~
   s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  // Bullet lists: lines starting with - or *
-  s = s.replace(/^([•\-\*])\s+(.+)$/gm, '<span class="md-li">$1 $2</span>');
-  // Numbered lists: lines starting with 1. 2. etc
-  s = s.replace(/^(\d+)\.\s+(.+)$/gm, '<span class="md-li">$1. $2</span>');
-  // Headers: # ## ### (render as bold, slightly bigger)
-  s = s.replace(/^#{3}\s+(.+)$/gm, '<strong class="md-h3">$1</strong>');
-  s = s.replace(/^#{2}\s+(.+)$/gm, '<strong class="md-h2">$1</strong>');
-  s = s.replace(/^#{1}\s+(.+)$/gm, '<strong class="md-h1">$1</strong>');
+  // Bullet lists
+  s = s.replace(/^([•*-]) (.+)$/gm, '<span class="md-li">$1 $2</span>');
+  // Numbered lists
+  s = s.replace(/^([0-9]+)[.] (.+)$/gm, '<span class="md-li">$1. $2</span>');
+  // Headers
+  s = s.replace(/^### (.+)$/gm, '<strong class="md-h3">$1</strong>');
+  s = s.replace(/^## (.+)$/gm, '<strong class="md-h2">$1</strong>');
+  s = s.replace(/^# (.+)$/gm, '<strong class="md-h1">$1</strong>');
   // Emoji checkmarks: ✅ ❌ ⚠️ already render natively
   return s;
 }
@@ -594,7 +655,7 @@ function splitText(text, maxLen) {
   while (remaining.length > maxLen) {
     let cut = -1;
     // Try newline first
-    const nlIdx = remaining.lastIndexOf('\n', maxLen);
+    const nlIdx = remaining.lastIndexOf(String.fromCharCode(10), maxLen);
     if (nlIdx > maxLen * 0.3) { cut = nlIdx + 1; }
     else {
       // Try sentence end (. ! ?) followed by space
