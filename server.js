@@ -1079,8 +1079,8 @@ function updateTicker(items) {
     html += '</span>';
   }
   tc.innerHTML = html;
-  // Adjust scroll speed based on content: ~80px/sec
-  var dur = Math.max(90, items.length * 8);
+  // Adjust scroll speed based on content: ~15px/sec (very slow crawl)
+  var dur = Math.max(300, items.length * 40);
   tc.style.setProperty('--ticker-duration', dur + 's');
   // Reset animation
   tc.style.animation = 'none';
