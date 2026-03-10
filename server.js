@@ -144,16 +144,16 @@ function parseMessage(line, channel) {
     const hasText = textParts.length > 0;
     const hasToolCall = toolParts.length > 0;
 
-    // Primary logic:
+    // Classification mirrors what Telegram actually displays:
     // - user messages with text: always primary (after stripping context wrappers)
-    // - assistant messages: DEFERRED. We buffer the last one and only promote to primary
-    //   when we see the next user message (meaning the turn ended). This filters out
-    //   narration between tool calls ("Let me check...", "Now update...").
-    //   See: isPrimary is set here but assistant messages get overridden by the deferred system.
+    // - assistant messages with text: always candidates for bubbles, because OpenClaw
+    //   sends the text portion to Telegram regardless of whether toolCalls accompany it.
+    //   Only NO_REPLY/HEARTBEAT_OK are suppressed (handled below).
+    // - assistant messages with ONLY toolCalls (no text): terminal feed only
+    // - toolResult, system: terminal feed only
     const isPrimary = (role === 'user') && hasText;
-    // Assistant messages with text but no tools get tagged as 'assistant-candidate'
-    // The tail watcher will handle promotion.
-    const isAssistantCandidate = (role === 'assistant') && hasText && !hasToolCall;
+    // Any assistant message with text is a bubble candidate (toolCalls don't matter)
+    const isAssistantCandidate = (role === 'assistant') && hasText;
 
     let text;
     if (isPrimary || isAssistantCandidate) {
@@ -212,10 +212,7 @@ function parseMessage(line, channel) {
 const fileOffsets = new Map();
 const watchers = new Map();
 
-// Per-channel buffer for deferred assistant message promotion
-// Key: channel, Value: { evt, timer }
-const pendingAssistant = new Map();
-const PROMOTE_DELAY_MS = 4000; // If no toolResult arrives within 4s, promote to bubble
+// No deferral needed: OpenClaw sends all assistant text to Telegram immediately.
 
 function emitEvent(evt) {
   recentEvents.push(evt);
@@ -223,15 +220,7 @@ function emitEvent(evt) {
   bus.emit('event', evt);
 }
 
-function promotePending(channel) {
-  const pending = pendingAssistant.get(channel);
-  if (!pending) return;
-  clearTimeout(pending.timer);
-  pending.evt.primary = true;
-  pending.evt.sentiment = null; // will be set client-side
-  emitEvent(pending.evt);
-  pendingAssistant.delete(channel);
-}
+// promotePending removed: all assistant text is emitted immediately as primary
 
 function tailFile(filePath) {
   const channel = inferChannel(filePath);
@@ -252,33 +241,13 @@ function tailFile(filePath) {
         const evt = parseMessage(line, channel);
         if (!evt) continue;
 
-        if (evt.primary) {
-          // User message arrived: promote any pending assistant message first
-          promotePending(channel);
-          emitEvent(evt);
-        } else if (evt.assistantCandidate) {
-          // Assistant text-only message. Buffer it; only promote if turn ends.
-          // Replace any existing pending (keep only the latest).
-          const old = pendingAssistant.get(channel);
-          if (old) {
-            clearTimeout(old.timer);
-            // Emit the old one as non-primary (terminal line)
-            old.evt.primary = false;
-            emitEvent(old.evt);
-          }
-          const timer = setTimeout(() => promotePending(channel), PROMOTE_DELAY_MS);
-          pendingAssistant.set(channel, { evt, timer });
-        } else if (evt.role === 'tool-result') {
-          // Tool result: the pending assistant message was narration, emit as terminal
-          const pending = pendingAssistant.get(channel);
-          if (pending) {
-            clearTimeout(pending.timer);
-            pending.evt.primary = false;
-            emitEvent(pending.evt);
-            pendingAssistant.delete(channel);
-          }
+        if (evt.primary || evt.assistantCandidate) {
+          // User message or assistant message with text: these are what Telegram
+          // actually displays. Emit as primary (bubble) immediately.
+          evt.primary = true;
           emitEvent(evt);
         } else {
+          // toolCall-only, toolResult, system: terminal feed
           emitEvent(evt);
         }
       }
