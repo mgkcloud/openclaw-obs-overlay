@@ -1006,7 +1006,7 @@ function addEntry(evt) {
       var breakEl = document.createElement('div');
       breakEl.className = 'thread-break';
       // Clean up channel name for display
-      var label = evtChannel.replace(/^main\//, '');
+      var label = evtChannel.indexOf('main/') === 0 ? evtChannel.substring(5) : evtChannel;
       breakEl.innerHTML = '<div class="thread-break-line"></div><span class="thread-break-label">' + esc(label) + '</span><div class="thread-break-line"></div>';
       feedInner.appendChild(breakEl);
       lastBubbleRole = null; // Reset grouping across thread breaks
@@ -1160,7 +1160,7 @@ function connect() {
     reconnectDelay = 1000;
     resetHeartbeat();
   };
-  es.onmessage = (e) => { resetHeartbeat(); try{addEntry(JSON.parse(e.data));}catch{} };
+  es.onmessage = (e) => { resetHeartbeat(); try{addEntry(JSON.parse(e.data));}catch(err){console.error('addEntry error:',err,e.data.substring(0,200));} };
   es.addEventListener('dashboard', (e) => { resetHeartbeat(); try{updateDash(JSON.parse(e.data));}catch{} });
   es.addEventListener('emotion', (e) => { resetHeartbeat(); try{setPet(JSON.parse(e.data).emotion);}catch{} });
   es.addEventListener('ticker', (e) => { resetHeartbeat(); try{updateTicker(JSON.parse(e.data));}catch{} });
