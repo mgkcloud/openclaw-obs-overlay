@@ -721,7 +721,7 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     height: 100%;
     white-space: nowrap;
-    animation: tickerScroll var(--ticker-duration, 240s) linear infinite;
+    animation: tickerScroll var(--ticker-duration, 480s) linear infinite;
     padding-left: 100%;
   }
   @keyframes tickerScroll {
