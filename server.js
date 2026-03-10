@@ -627,26 +627,49 @@ function setPet(e) {
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
-// Markdown-lite: uses new RegExp() with safe patterns for template literal context
+// Markdown-lite: ZERO regex. Pure string ops only.
 function md(raw) {
   var s = esc(raw);
-  // Bold: **text**
-  s = s.replace(new RegExp('[*][*](.+?)[*][*]', 'g'), '<strong>$1</strong>');
-  // Markdown links: [text](url) -> shortened clickable
-  s = s.replace(new RegExp('\\\\[([^\\\\]]+)\\\\]\\\\(([^)]+)\\\\)', 'g'), function(_, t, u) {
-    return '<a href="' + u + '" target="_blank" style="color:#0af">' + t + '</a>';
-  });
-  // Bare URLs -> shortened clickable
-  s = s.replace(new RegExp('(https?://[^ <"\']+)', 'g'), function(u) {
-    var short = u.length > 50 ? u.substring(0, 47) + '...' : u;
-    return '<a href="' + u + '" target="_blank" style="color:#0af">' + short + '</a>';
-  });
-  // Inline code (use hex for backtick to avoid template literal issues)
-  s = s.replace(new RegExp(String.fromCharCode(96) + '([^' + String.fromCharCode(96) + ']+)' + String.fromCharCode(96), 'g'),
-    '<code style="background:rgba(255,255,255,0.1);padding:0 3px;border-radius:2px">$1</code>');
-  // Bullet lists: lines starting with - or *
-  s = s.replace(new RegExp('^([*-]) (.+)$', 'gm'), '<span style="display:block;padding-left:12px">$1 $2</span>');
-  return s;
+  var out = '';
+  var i = 0;
+  while (i < s.length) {
+    // Bold: **text**
+    if (s[i] === '*' && s[i+1] === '*') {
+      var end = s.indexOf('**', i + 2);
+      if (end > i + 2) {
+        out += '<strong>' + s.substring(i + 2, end) + '</strong>';
+        i = end + 2;
+        continue;
+      }
+    }
+    // Markdown link: [text](url)
+    if (s[i] === '[') {
+      var cb = s.indexOf(']', i + 1);
+      if (cb > i && s[cb + 1] === '(') {
+        var cp = s.indexOf(')', cb + 2);
+        if (cp > cb + 2) {
+          var linkText = s.substring(i + 1, cb);
+          var linkUrl = s.substring(cb + 2, cp);
+          out += '<a href="' + linkUrl + '" target="_blank" style="color:#0af">' + linkText + '</a>';
+          i = cp + 1;
+          continue;
+        }
+      }
+    }
+    // Bare URL
+    if (s.substring(i, i + 8) === 'https://' || s.substring(i, i + 7) === 'http://') {
+      var urlEnd = i;
+      while (urlEnd < s.length && s[urlEnd] !== ' ' && s[urlEnd] !== '<' && s[urlEnd] !== '"' && s.charCodeAt(urlEnd) !== 10) urlEnd++;
+      var url = s.substring(i, urlEnd);
+      var label = url.length > 50 ? url.substring(0, 47) + '...' : url;
+      out += '<a href="' + url + '" target="_blank" style="color:#0af">' + label + '</a>';
+      i = urlEnd;
+      continue;
+    }
+    out += s[i];
+    i++;
+  }
+  return out;
 }
 function pnl(v) { return (v>=0?'+':'-') + '$' + Math.abs(v).toFixed(2); }
 function pc(v) { return v>=0?'ok':'warn'; }
