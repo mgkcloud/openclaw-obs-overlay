@@ -65,21 +65,58 @@ function inferChannel(filePath) {
 
 // Strip OpenClaw XML context wrappers from user messages
 function stripContextWrappers(text) {
-  // Remove <graphiti-context>...</graphiti-context>
+  // Strategy: find the LAST metadata marker and take everything after it.
+  // Metadata blocks appear in order: graphiti, task-ledger, System lines,
+  // Conversation info + json block, Sender + json block, Replied message + json block.
+  // The actual user message is always at the very end.
+
+  // Find the last closing ``` that belongs to a metadata json block
+  const markers = [
+    '</graphiti-context>',
+    '</task-ledger-context>',
+    '</summary>',
+    '"is_group_chat": true\n}\n```',
+    '"is_group_chat": false\n}\n```',
+    '"username": "Mgknum"\n}\n```',
+    'has_reply_context',
+  ];
+
+  let lastEnd = -1;
+  for (const m of markers) {
+    const idx = text.lastIndexOf(m);
+    if (idx >= 0) {
+      const end = idx + m.length;
+      if (end > lastEnd) lastEnd = end;
+    }
+  }
+
+  // Also find the last ``` that closes a metadata json block
+  // by looking for the pattern: closing brace + newline + ```
+  let searchFrom = 0;
+  const closePattern = '}\n```';
+  while (true) {
+    const idx = text.indexOf(closePattern, searchFrom);
+    if (idx < 0) break;
+    const end = idx + closePattern.length;
+    // Only count if there's a ```json before this closing
+    const before = text.substring(Math.max(0, idx - 2000), idx);
+    if (before.includes('```json') || before.includes('untrusted metadata')) {
+      if (end > lastEnd) lastEnd = end;
+    }
+    searchFrom = end;
+  }
+
+  if (lastEnd > 0 && lastEnd < text.length) {
+    text = text.substring(lastEnd);
+  }
+
+  // Remove any remaining XML context tags (in case of partial matches)
   text = text.replace(/<graphiti-context>[\s\S]*?<\/graphiti-context>/g, '');
-  // Remove <task-ledger-context>...</task-ledger-context>
   text = text.replace(/<task-ledger-context>[\s\S]*?<\/task-ledger-context>/g, '');
-  // Remove <summary ...>...</summary> blocks
   text = text.replace(/<summary[\s\S]*?<\/summary>/g, '');
-  // Remove System: [...] lines
+  // Remove System: lines
   text = text.replace(/System:\s*\[.*?\].*?\n/g, '');
-  // Remove Conversation info + Sender metadata blocks (```json ... ```)
-  text = text.replace(/Conversation info \(untrusted metadata\):[\s\S]*?```\s*/g, '');
-  text = text.replace(/Sender \(untrusted metadata\):[\s\S]*?```\s*/g, '');
-  // Remove any remaining ```json...``` blocks
-  text = text.replace(/```json[\s\S]*?```/g, '');
-  text = text.replace(/```[\s\S]*?```/g, '');
-  // Collapse whitespace but keep meaningful newlines
+
   return text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
