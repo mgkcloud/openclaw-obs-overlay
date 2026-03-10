@@ -646,6 +646,19 @@ const HTML = `<!DOCTYPE html>
   }
   .imsg.sent .imsg-meta { text-align: right; }
   .imsg.recv .imsg-meta { text-align: left; }
+  .thread-break {
+    display: flex; align-items: center; gap: 8px;
+    margin: 10px 0 6px 0; padding: 0 12px;
+    opacity: 0.4;
+  }
+  .thread-break-line {
+    flex: 1; height: 1px; background: #1a6e1a;
+  }
+  .thread-break-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px; color: #1a6e1a;
+    white-space: nowrap; text-transform: uppercase; letter-spacing: 1px;
+  }
 
   @keyframes imsgPop {
     from { transform: translateY(8px) scale(0.95); opacity:0; }
@@ -907,6 +920,7 @@ function updateDash(data) {
 }
 
 let lastBubbleRole = null;
+let lastBubbleChannel = null;
 
 // Split long text into chunks at sentence/newline boundaries
 // Each chunk becomes its own bubble (nestled with .grouped)
@@ -985,12 +999,24 @@ function addEntry(evt) {
     const isUser = evt.role === 'user';
     const side = isUser ? 'sent' : 'recv';
     const sameAsLast = lastBubbleRole === side;
+    const evtChannel = evt.channel || 'unknown';
+
+    // Thread break: insert subtle divider when conversation switches threads
+    if (lastBubbleChannel && evtChannel !== lastBubbleChannel) {
+      var breakEl = document.createElement('div');
+      breakEl.className = 'thread-break';
+      // Clean up channel name for display
+      var label = evtChannel.replace(/^main\//, '');
+      breakEl.innerHTML = '<div class="thread-break-line"></div><span class="thread-break-label">' + esc(label) + '</span><div class="thread-break-line"></div>';
+      feedInner.appendChild(breakEl);
+      lastBubbleRole = null; // Reset grouping across thread breaks
+    }
+    lastBubbleChannel = evtChannel;
 
     const t = new Date(evt.timestamp);
     const timeStr = t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
     const who = isUser ? 'WILL' : 'GG';
-    const thread = evt.threadLabel ? evt.threadLabel + ' · ' : (evt.channel ? evt.channel + ' · ' : '');
-    const metaStr = thread + who + ' ' + timeStr;
+    const metaStr = who + ' ' + timeStr;
 
     const ts = evt.ts || Date.now();
     // Split into chunks (~280 chars max per bubble)
