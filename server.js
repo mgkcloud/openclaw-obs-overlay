@@ -72,14 +72,15 @@ function stripContextWrappers(text) {
   // Remove <summary ...>...</summary> blocks
   text = text.replace(/<summary[\s\S]*?<\/summary>/g, '');
   // Remove System: [...] lines
-  text = text.replace(/System:.*?\n/g, '');
+  text = text.replace(/System:\s*\[.*?\].*?\n/g, '');
   // Remove Conversation info + Sender metadata blocks (```json ... ```)
   text = text.replace(/Conversation info \(untrusted metadata\):[\s\S]*?```\s*/g, '');
   text = text.replace(/Sender \(untrusted metadata\):[\s\S]*?```\s*/g, '');
   // Remove any remaining ```json...``` blocks
   text = text.replace(/```json[\s\S]*?```/g, '');
   text = text.replace(/```[\s\S]*?```/g, '');
-  return text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+  // Collapse whitespace but keep meaningful newlines
+  return text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function parseMessage(line, channel) {
@@ -144,7 +145,18 @@ function parseMessage(line, channel) {
     const roleTag = { user: 'USER', assistant: 'GG', toolCall: 'TOOL', toolResult: 'RES', system: 'SYS' }[role] || 'MSG';
     const roleClass = { user: 'user', assistant: 'assistant', toolCall: 'tool', toolResult: 'tool-result', system: 'system' }[role] || 'other';
 
-    return { id: entry.id || Math.random().toString(36).slice(2), channel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, sentiment };
+    // Extract conversation label for user messages (thread context)
+    let threadLabel = null;
+    if (role === 'user' && typeof msg.content !== 'string' && Array.isArray(msg.content)) {
+      for (const block of msg.content) {
+        if (block.type === 'text' && block.text) {
+          const labelMatch = block.text.match(/"conversation_label":\s*"([^"]+)"/);
+          if (labelMatch) { threadLabel = labelMatch[1].replace(/\s*id:.*$/, '').trim(); break; }
+        }
+      }
+    }
+
+    return { id: entry.id || Math.random().toString(36).slice(2), channel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, sentiment, threadLabel };
   } catch { return null; }
 }
 
@@ -340,14 +352,14 @@ const HTML = `<!DOCTYPE html>
   /* ===== FEED: bottom-right, mixed terminal lines + iOS bubbles ===== */
   #feed {
     position: fixed; bottom: 16px; right: 16px;
-    width: 52%; max-height: 60%;
+    width: 52%; max-height: 70vh;
     display: flex; flex-direction: column; justify-content: flex-end;
     overflow-y: auto; overflow-x: hidden;
-    scrollbar-width: none; /* Firefox */
+    scrollbar-width: none;
   }
   #feed::-webkit-scrollbar { display: none; }
 
-  /* Terminal entries (tool calls, tool results, system) */
+  /* Terminal entries (tool calls, tool results, system) — the matrix behind the chat */
   .entry {
     padding: 1px 0; font-size: 10px; color: #1a8c1a;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -359,20 +371,51 @@ const HTML = `<!DOCTYPE html>
 
   /* iOS iMessage bubbles */
   .imsg {
-    display: flex; margin: 2px 0; padding: 0 4px;
+    display: flex; margin: 3px 0; padding: 0 4px;
     animation: imsgPop 0.25s cubic-bezier(0.22,1,0.36,1);
   }
   .imsg.sent { justify-content: flex-end; }
   .imsg.recv { justify-content: flex-start; }
-  .imsg-col { max-width: 80%; }
+  .imsg-col { max-width: 82%; }
 
   .imsg-bubble {
-    padding: 7px 12px;
+    padding: 8px 14px;
     font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Arial, sans-serif;
-    font-size: 14px; line-height: 1.35;
+    font-size: 15px; line-height: 1.4;
     word-wrap: break-word; white-space: pre-wrap;
     border-radius: 18px; position: relative;
-    max-width: 480px;
+    max-width: 520px;
+  }
+
+  /* Long bubble: Twitch-style auto-scroll with top+bottom fade */
+  .imsg-bubble-wrap {
+    position: relative;
+    max-height: 180px;
+    overflow: hidden;
+  }
+  .imsg-bubble-wrap.scrollable::before,
+  .imsg-bubble-wrap.scrollable::after {
+    content: ''; position: absolute; left: 0; right: 0; height: 28px;
+    pointer-events: none; z-index: 2;
+  }
+  .imsg-bubble-wrap.scrollable.sent-wrap::before { top:0; background: linear-gradient(to bottom, #007AFF 0%, transparent 100%); border-radius: 18px 18px 0 0; }
+  .imsg-bubble-wrap.scrollable.sent-wrap::after { bottom:0; background: linear-gradient(to top, #007AFF 0%, transparent 100%); border-radius: 0 0 18px 4px; }
+  .imsg-bubble-wrap.scrollable.recv-wrap::before { top:0; background: linear-gradient(to bottom, #E9E9EB 0%, transparent 100%); border-radius: 18px 18px 0 0; }
+  .imsg-bubble-wrap.scrollable.recv-wrap::after { bottom:0; background: linear-gradient(to top, #E9E9EB 0%, transparent 100%); border-radius: 0 0 4px 18px; }
+
+  .imsg-bubble-inner {
+    max-height: 180px;
+    overflow: hidden;
+  }
+  /* When scrolling, the inner div animates translateY */
+  .imsg-bubble-inner.scrolling {
+    animation: bubbleScroll var(--scroll-duration, 12s) linear infinite;
+  }
+  @keyframes bubbleScroll {
+    0% { transform: translateY(0); }
+    10% { transform: translateY(0); }
+    90% { transform: translateY(var(--scroll-distance, -200px)); }
+    100% { transform: translateY(var(--scroll-distance, -200px)); }
   }
 
   /* User = iOS blue, right-aligned */
@@ -400,6 +443,7 @@ const HTML = `<!DOCTYPE html>
   .imsg-meta {
     font-family: 'Share Tech Mono', monospace;
     font-size: 9px; margin-top: 1px; padding: 0 4px; color: #1a6e1a;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .imsg.sent .imsg-meta { text-align: right; }
   .imsg.recv .imsg-meta { text-align: left; }
@@ -518,7 +562,7 @@ function addEntry(evt) {
     const isUser = evt.role === 'user';
     const sameAsLast = lastBubbleRole === (isUser ? 'sent' : 'recv');
 
-    // If same sender as last bubble, mark the previous one as grouped (hide its tail + meta)
+    // If same sender as last bubble, mark the previous one as grouped
     if (sameAsLast) {
       const prevBubbles = feed.querySelectorAll('.imsg.' + (isUser ? 'sent' : 'recv'));
       if (prevBubbles.length > 0) {
@@ -534,21 +578,47 @@ function addEntry(evt) {
     const col = document.createElement('div');
     col.className = 'imsg-col';
 
+    // Bubble wrapper for scroll containment
+    const wrap = document.createElement('div');
+    wrap.className = 'imsg-bubble-wrap ' + (isUser ? 'sent-wrap' : 'recv-wrap');
+
     const bubble = document.createElement('div');
     bubble.className = 'imsg-bubble';
-    let displayText = evt.text;
-    if (displayText.length > 300) displayText = displayText.slice(0,297) + '...';
-    bubble.textContent = displayText;
 
+    const inner = document.createElement('div');
+    inner.className = 'imsg-bubble-inner';
+    inner.textContent = evt.text;
+
+    bubble.appendChild(inner);
+    wrap.appendChild(bubble);
+
+    // Meta: compact thread + time
     const meta = document.createElement('div');
     meta.className = 'imsg-meta';
     const t = new Date(evt.timestamp);
-    meta.textContent = (isUser ? 'WILL' : 'GG') + ' ' + t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+    const timeStr = t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+    const who = isUser ? 'WILL' : 'GG';
+    const thread = evt.threadLabel ? evt.threadLabel + ' · ' : (evt.channel ? evt.channel + ' · ' : '');
+    meta.textContent = thread + who + ' ' + timeStr;
 
-    col.appendChild(bubble);
+    col.appendChild(wrap);
     col.appendChild(meta);
     row.appendChild(col);
     feed.appendChild(row);
+
+    // Check if bubble overflows and needs Twitch-style scroll
+    requestAnimationFrame(() => {
+      const scrollH = inner.scrollHeight;
+      const maxH = 180;
+      if (scrollH > maxH) {
+        wrap.classList.add('scrollable');
+        const distance = scrollH - maxH + 28; // scroll distance + fade padding
+        const duration = Math.max(6, Math.min(20, distance / 20)); // ~20px/sec, clamped
+        inner.style.setProperty('--scroll-distance', '-' + distance + 'px');
+        inner.style.setProperty('--scroll-duration', duration + 's');
+        inner.classList.add('scrolling');
+      }
+    });
 
     lastBubbleRole = isUser ? 'sent' : 'recv';
   } else {
