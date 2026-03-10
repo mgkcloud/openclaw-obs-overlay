@@ -697,7 +697,7 @@ const HTML = `<!DOCTYPE html>
   #tickerLabel { display: none; }
   #tickerLabel .dot { display: none; }
   #tickerFlag {
-    position: absolute; top: -18px; right: 0;
+    position: fixed; bottom: 48px; right: 0;
     background: rgba(0,0,0,0.85);
     border: 1px solid #1a3a1a;
     border-bottom: none;
@@ -794,7 +794,7 @@ const HTML = `<!DOCTYPE html>
 
 <div id="feed"><div id="feedInner"></div></div>
 
-<div id="tickerBar" style="position:relative">
+<div id="tickerBar">
   <div id="tickerFlag">DEXTER SIGNAL INTELLIGENCE</div>
   <div id="tickerLabel"><span class="dot"></span>SIGNAL INTEL</div>
   <div id="tickerTrack"><div id="tickerContent"><span class="ticker-empty">AWAITING SIGNALS...</span></div></div>
