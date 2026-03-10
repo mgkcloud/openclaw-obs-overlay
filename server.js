@@ -670,7 +670,7 @@ const HTML = `<!DOCTYPE html>
   /* ===== SIGNAL TICKER ===== */
   #tickerBar {
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: 28px; z-index: 99;
+    height: 84px; z-index: 99;
     display: flex; align-items: stretch;
     font-family: 'Share Tech Mono', 'Courier New', monospace;
     overflow: hidden;
@@ -704,7 +704,7 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     padding: 0 28px 0 0;
     height: 100%;
-    font-size: 13px;
+    font-size: 22px;
     color: #33ff33;
   }
   .ticker-item .ti-sev {
@@ -712,21 +712,21 @@ const HTML = `<!DOCTYPE html>
   }
   .ticker-item .ti-src {
     color: #1a8c1a;
-    margin-right: 8px;
-    font-size: 11px;
+    margin-right: 10px;
+    font-size: 16px;
   }
   .ticker-item .ti-headline {
     color: #33ff33;
   }
   .ticker-item .ti-market {
     color: #0af;
-    margin-left: 8px;
-    font-size: 12px;
+    margin-left: 10px;
+    font-size: 18px;
   }
   .ticker-item .ti-sep {
     color: #1a4a1a;
-    margin: 0 14px;
-    font-size: 13px;
+    margin: 0 18px;
+    font-size: 22px;
   }
   .ticker-empty {
     color: #1a6e1a;
