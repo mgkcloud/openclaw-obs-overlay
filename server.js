@@ -687,7 +687,7 @@ const HTML = `<!DOCTYPE html>
   /* ===== SIGNAL TICKER ===== */
   #tickerBar {
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: 84px; z-index: 99;
+    height: 48px; z-index: 99;
     display: flex; align-items: stretch;
     font-family: 'Share Tech Mono', 'Courier New', monospace;
     overflow: hidden;
@@ -696,6 +696,19 @@ const HTML = `<!DOCTYPE html>
   }
   #tickerLabel { display: none; }
   #tickerLabel .dot { display: none; }
+  #tickerFlag {
+    position: absolute; top: -18px; right: 0;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid #1a3a1a;
+    border-bottom: none;
+    border-right: none;
+    color: #1a8c1a;
+    font-family: 'Share Tech Mono', 'Courier New', monospace;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    padding: 3px 10px 2px 8px;
+    z-index: 100;
+  }
   @keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
   #tickerTrack {
@@ -708,7 +721,7 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     height: 100%;
     white-space: nowrap;
-    animation: tickerScroll var(--ticker-duration, 120s) linear infinite;
+    animation: tickerScroll var(--ticker-duration, 240s) linear infinite;
     padding-left: 100%;
   }
   @keyframes tickerScroll {
@@ -721,7 +734,7 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     padding: 0 28px 0 0;
     height: 100%;
-    font-size: 22px;
+    font-size: 16px;
     color: #33ff33;
   }
   .ticker-item .ti-sev {
@@ -729,21 +742,21 @@ const HTML = `<!DOCTYPE html>
   }
   .ticker-item .ti-src {
     color: #1a8c1a;
-    margin-right: 10px;
-    font-size: 16px;
+    margin-right: 8px;
+    font-size: 12px;
   }
   .ticker-item .ti-headline {
     color: #33ff33;
   }
   .ticker-item .ti-market {
     color: #0af;
-    margin-left: 10px;
-    font-size: 18px;
+    margin-left: 8px;
+    font-size: 14px;
   }
   .ticker-item .ti-sep {
     color: #1a4a1a;
-    margin: 0 18px;
-    font-size: 22px;
+    margin: 0 16px;
+    font-size: 16px;
   }
   .ticker-empty {
     color: #1a6e1a;
@@ -781,7 +794,8 @@ const HTML = `<!DOCTYPE html>
 
 <div id="feed"><div id="feedInner"></div></div>
 
-<div id="tickerBar">
+<div id="tickerBar" style="position:relative">
+  <div id="tickerFlag">DEXTER SIGNAL INTELLIGENCE</div>
   <div id="tickerLabel"><span class="dot"></span>SIGNAL INTEL</div>
   <div id="tickerTrack"><div id="tickerContent"><span class="ticker-empty">AWAITING SIGNALS...</span></div></div>
 </div>
