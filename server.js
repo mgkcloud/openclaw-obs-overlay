@@ -117,14 +117,24 @@ function refreshDashboard() {
 refreshDashboard();
 setInterval(refreshDashboard, DASHBOARD_INTERVAL);
 
+// Map file-based channel IDs to clean names learned from conversation_label
+const channelNames = new Map();
+
 function inferChannel(filePath) {
   const parts = filePath.split(path.sep);
   const agentIdx = parts.indexOf('agents');
   const agentName = agentIdx >= 0 ? parts[agentIdx + 1] : '?';
   const filename = path.basename(filePath, '.jsonl');
   const topicMatch = filename.match(/topic-(\d+)/);
-  if (topicMatch) return `${agentName}/t${topicMatch[1]}`;
-  return `${agentName}/${filename.slice(0, 6)}`;
+  const rawId = topicMatch ? `${agentName}/t${topicMatch[1]}` : `${agentName}/${filename.slice(0, 6)}`;
+  return channelNames.get(rawId) || rawId;
+}
+
+// Learn channel name from conversation_label in user messages
+function learnChannelName(rawChannel, label) {
+  if (!label || channelNames.has(rawChannel)) return;
+  // label is like "ClawdBot Trading" or "GG DMs" after id: stripping
+  channelNames.set(rawChannel, label);
 }
 
 // Strip OpenClaw XML context wrappers from user messages
@@ -267,12 +277,19 @@ function parseMessage(line, channel) {
       for (const block of msg.content) {
         if (block.type === 'text' && block.text) {
           const labelMatch = block.text.match(/"conversation_label":\s*"([^"]+)"/);
-          if (labelMatch) { threadLabel = labelMatch[1].replace(/\s*id:.*$/, '').trim(); break; }
+          if (labelMatch) {
+            threadLabel = labelMatch[1].replace(/\s*id:.*$/, '').replace(/\s*topic:.*$/, '').trim();
+            learnChannelName(channel, threadLabel);
+            break;
+          }
         }
       }
     }
 
-    return { id: entry.id || Math.random().toString(36).slice(2), channel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, assistantCandidate: isAssistantCandidate, sentiment, threadLabel };
+    // Use clean channel name if learned
+    const cleanChannel = channelNames.get(channel) || channel;
+
+    return { id: entry.id || Math.random().toString(36).slice(2), channel: cleanChannel, role: roleClass, roleTag, text, timestamp, ts: Date.now(), primary: isPrimary, assistantCandidate: isAssistantCandidate, sentiment, threadLabel };
   } catch { return null; }
 }
 
