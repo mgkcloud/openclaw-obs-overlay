@@ -667,40 +667,22 @@ const HTML = `<!DOCTYPE html>
   /* Fading for old entries */
   .fading { opacity: 0.15; transition: opacity 5s ease-out; }
 
-  /* ===== SIGNAL INTEL TICKER ===== */
+  /* ===== SIGNAL TICKER ===== */
   #tickerBar {
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: 22px; z-index: 99;
-    display: flex; flex-direction: column;
+    height: 28px; z-index: 99;
+    display: flex; align-items: stretch;
     font-family: 'Share Tech Mono', 'Courier New', monospace;
     overflow: hidden;
+    background: rgba(0,0,0,0.9);
+    border-top: 1px solid #1a3a1a;
   }
-  #tickerLabel {
-    background: rgba(0,0,0,0.95);
-    color: #661111;
-    font-size: 7px;
-    font-weight: bold;
-    letter-spacing: 2px;
-    padding: 0 6px;
-    height: 8px;
-    line-height: 8px;
-    display: flex; align-items: center;
-    border-bottom: 1px solid #220000;
-    flex-shrink: 0;
-  }
-  #tickerLabel .dot {
-    display: inline-block;
-    width: 3px; height: 3px;
-    background: #cc0000;
-    border-radius: 50%;
-    margin-right: 5px;
-    animation: dotPulse 2s ease-in-out infinite;
-  }
+  #tickerLabel { display: none; }
+  #tickerLabel .dot { display: none; }
   @keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
   #tickerTrack {
     flex: 1;
-    background: rgba(0,0,0,0.9);
     overflow: hidden;
     position: relative;
   }
@@ -709,7 +691,7 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     height: 100%;
     white-space: nowrap;
-    animation: tickerScroll var(--ticker-duration, 180s) linear infinite;
+    animation: tickerScroll var(--ticker-duration, 120s) linear infinite;
     padding-left: 100%;
   }
   @keyframes tickerScroll {
@@ -720,31 +702,31 @@ const HTML = `<!DOCTYPE html>
   .ticker-item {
     display: inline-flex;
     align-items: center;
-    padding: 0 20px 0 0;
+    padding: 0 28px 0 0;
     height: 100%;
-    font-size: 10px;
+    font-size: 13px;
     color: #33ff33;
   }
   .ticker-item .ti-sev {
     display: none;
   }
   .ticker-item .ti-src {
-    color: #1a6e1a;
-    margin-right: 5px;
-    font-size: 8px;
+    color: #1a8c1a;
+    margin-right: 8px;
+    font-size: 11px;
   }
   .ticker-item .ti-headline {
     color: #33ff33;
   }
   .ticker-item .ti-market {
     color: #0af;
-    margin-left: 5px;
-    font-size: 9px;
+    margin-left: 8px;
+    font-size: 12px;
   }
   .ticker-item .ti-sep {
-    color: #1a3a1a;
-    margin: 0 10px;
-    font-size: 10px;
+    color: #1a4a1a;
+    margin: 0 14px;
+    font-size: 13px;
   }
   .ticker-empty {
     color: #1a6e1a;
