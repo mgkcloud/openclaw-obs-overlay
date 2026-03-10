@@ -93,16 +93,17 @@ let petEmotionTs = Date.now();
 
 function analyzeSentiment(text, role) {
   const lower = text.toLowerCase();
-  if (/(\bholy shit|incredible|breakthrough|massive|insane|record|best ever|crushing it|moon|10x)/.test(lower)) return 'ecstatic';
-  if (/(fuck|shit|damn|wtf|broken|crashed|failed|wipeout|bleeding|lost \$|destroyed|-\$[5-9]\d|-\$\d{2,})/.test(lower)) return role === 'user' ? 'scared' : 'sorry';
-  if (/(warning|alert|critical|emergency|⚠️|🚨|low balance|halted|blocked)/.test(lower)) return 'worried';
-  if (/(sorry|apologize|my bad|mistake|regression|bug|error|wrong)/.test(lower)) return 'sorry';
-  if (/(weird|strange|unexpected|doesn'?t make sense|confused|unclear)/.test(lower)) return 'confused';
-  if (/(deployed|launched|built|created|completed|delivered|milestone)/.test(lower)) return 'proud';
-  if (/(\bdone\b|✅|shipped|fixed|success|profit|\+\$|winning|nailed|perfect|awesome|great|🔥|💰)/.test(lower)) return 'happy';
-  if (/(running|processing|spawning|building|installing|compiling|writing)/.test(lower)) return 'working';
-  if (/(analyzing|checking|looking|searching|reading|scanning|hmm|let me)/.test(lower)) return 'thinking';
-  if (/(heartbeat_ok|no changes|all good|nothing|quiet|idle)/.test(lower)) return 'sleepy';
+  function hasAny(words) { for (const w of words) { if (lower.includes(w)) return true; } return false; }
+  if (hasAny(['holy shit','incredible','breakthrough','massive','insane','record','best ever','crushing it','moon','10x'])) return 'ecstatic';
+  if (hasAny(['fuck','shit','damn','wtf','broken','crashed','failed','wipeout','bleeding','lost $','destroyed','-$'])) return role === 'user' ? 'scared' : 'sorry';
+  if (hasAny(['warning','alert','critical','emergency','⚠️','🚨','low balance','halted','blocked'])) return 'worried';
+  if (hasAny(['sorry','apologize','my bad','mistake','regression','bug','error','wrong'])) return 'sorry';
+  if (hasAny(['weird','strange','unexpected','make sense','confused','unclear'])) return 'confused';
+  if (hasAny(['deployed','launched','built','created','completed','delivered','milestone'])) return 'proud';
+  if (hasAny(['done','✅','shipped','fixed','success','profit','+$','winning','nailed','perfect','awesome','great','🔥','💰'])) return 'happy';
+  if (hasAny(['running','processing','spawning','building','installing','compiling','writing'])) return 'working';
+  if (hasAny(['analyzing','checking','looking','searching','reading','scanning','hmm','let me'])) return 'thinking';
+  if (hasAny(['heartbeat_ok','no changes','all good','nothing','quiet','idle'])) return 'sleepy';
   return role === 'user' ? 'attentive' : 'idle';
 }
 
@@ -125,8 +126,21 @@ function inferChannel(filePath) {
   const agentIdx = parts.indexOf('agents');
   const agentName = agentIdx >= 0 ? parts[agentIdx + 1] : '?';
   const filename = path.basename(filePath, '.jsonl');
-  const topicMatch = filename.match(/topic-(\d+)/);
-  const rawId = topicMatch ? `${agentName}/t${topicMatch[1]}` : `${agentName}/${filename.slice(0, 6)}`;
+  const topicPrefix = 'topic-';
+  const topicIdx = filename.indexOf(topicPrefix);
+  let rawId;
+  if (topicIdx >= 0) {
+    // Extract digits after 'topic-'
+    const afterTopic = filename.substring(topicIdx + topicPrefix.length);
+    let topicNum = '';
+    for (let ci = 0; ci < afterTopic.length; ci++) {
+      if (afterTopic[ci] >= '0' && afterTopic[ci] <= '9') topicNum += afterTopic[ci];
+      else break;
+    }
+    rawId = `${agentName}/t${topicNum}`;
+  } else {
+    rawId = `${agentName}/${filename.slice(0, 6)}`;
+  }
   return channelNames.get(rawId) || rawId;
 }
 
@@ -184,14 +198,31 @@ function stripContextWrappers(text) {
     text = text.substring(lastEnd);
   }
 
-  // Remove any remaining XML context tags (in case of partial matches)
-  text = text.replace(/<graphiti-context>[\s\S]*?<\/graphiti-context>/g, '');
-  text = text.replace(/<task-ledger-context>[\s\S]*?<\/task-ledger-context>/g, '');
-  text = text.replace(/<summary[\s\S]*?<\/summary>/g, '');
-  // Remove System: lines
-  text = text.replace(/System:\s*\[.*?\].*?\n/g, '');
+  // Remove any remaining XML context tags (in case of partial matches) — string ops only
+  function stripTag(t, openTag, closeTag) {
+    let result = t;
+    let idx = result.indexOf(openTag);
+    while (idx >= 0) {
+      const end = result.indexOf(closeTag, idx);
+      if (end < 0) break;
+      result = result.substring(0, idx) + result.substring(end + closeTag.length);
+      idx = result.indexOf(openTag);
+    }
+    return result;
+  }
+  text = stripTag(text, '<graphiti-context>', '</graphiti-context>');
+  text = stripTag(text, '<task-ledger-context>', '</task-ledger-context>');
+  text = stripTag(text, '<summary', '</summary>');
+  // Remove System: [...] lines
+  let lines = text.split('\n');
+  lines = lines.filter(l => !(l.trimStart().startsWith('System:') && l.includes('[')));
+  text = lines.join('\n');
 
-  return text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  // Collapse whitespace
+  text = text.split('\t').join(' ');
+  while (text.includes('  ')) text = text.split('  ').join(' ');
+  while (text.includes('\n\n\n')) text = text.split('\n\n\n').join('\n\n');
+  return text.trim();
 }
 
 function parseMessage(line, channel) {
@@ -234,29 +265,44 @@ function parseMessage(line, channel) {
       // Preserve formatting (may become a bubble)
       text = textParts.join('\n');
       if (role === 'user') text = stripContextWrappers(text);
-      // Strip reply tags from assistant messages
-      text = text.replace(/\[\[\s*reply_to_current\s*\]\]/g, '');
-      text = text.replace(/\[\[\s*reply_to:\s*\d+\s*\]\]/g, '');
-      text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+      // Strip reply tags from assistant messages — string ops only
+      while (text.includes('[[reply_to_current]]')) text = text.split('[[reply_to_current]]').join('');
+      while (text.includes('[[ reply_to_current ]]')) text = text.split('[[ reply_to_current ]]').join('');
+      // Strip [[reply_to:NNN]] tags
+      var rIdx = text.indexOf('[[reply_to:');
+      while (rIdx >= 0) {
+        var rEnd = text.indexOf(']]', rIdx);
+        if (rEnd > rIdx) { text = text.substring(0, rIdx) + text.substring(rEnd + 2); }
+        else break;
+        rIdx = text.indexOf('[[reply_to:');
+      }
+      text = text.split('\t').join(' ');
+      while (text.includes('  ')) text = text.split('  ').join(' ');
+      while (text.includes('\n\n\n')) text = text.split('\n\n\n').join('\n\n');
+      text = text.trim();
     } else if (hasToolCall) {
       text = toolParts.join(', ');
     } else if (hasText) {
-      text = textParts.join(' ').replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      text = textParts.join(' ').split('\n').join(' ').split('\t').join(' ');
+      while (text.includes('  ')) text = text.split('  ').join(' ');
+      text = text.trim();
     } else {
       return null;
     }
 
     if (!text || text.length < 2) return null;
-    // Skip NO_REPLY, HEARTBEAT_OK, and internal runtime events
-    if (/^(NO_REPLY|HEARTBEAT_OK)$/i.test(text.trim())) return null;
-    if (/OpenClaw runtime context|^\[.*?\] OpenClaw|Internal task completion|runtime-generated.*not user-authored/i.test(text)) return null;
-    // Skip heartbeat prompts, metadata-only messages, cron triggers
-    if (/^Read HEARTBEAT\.md|^\[.*GMT.*\]\s*$/i.test(text.trim())) return null;
-    if (/^\[cron:[0-9a-f-]+/.test(text.trim())) return null;
-    if (/^Note: The previous agent run was aborted/.test(text.trim())) return null;
-    if (/^Your previous response was only an acknowledgement/.test(text.trim())) return null;
+    const trimmed = text.trim();
+    const trimmedLower = trimmed.toLowerCase();
+    // Skip NO_REPLY, HEARTBEAT_OK
+    if (trimmedLower === 'no_reply' || trimmedLower === 'heartbeat_ok') return null;
+    // Skip internal runtime events
+    if (trimmed.includes('OpenClaw runtime context') || trimmed.includes('Internal task completion') || trimmed.includes('runtime-generated')) return null;
+    if (trimmedLower.startsWith('read heartbeat.md')) return null;
+    if (trimmed.startsWith('[cron:')) return null;
+    if (trimmed.startsWith('Note: The previous agent run was aborted')) return null;
+    if (trimmed.startsWith('Your previous response was only an acknowledgement')) return null;
     // Skip messages that are just empty after context stripping
-    if (text.replace(/[\s\n]/g, '').length < 3) return null;
+    if (trimmed.split(' ').join('').split('\n').join('').split('\t').join('').length < 3) return null;
 
     // Don't truncate candidates (they may get promoted to bubbles)
     if (!isPrimary && !isAssistantCandidate && text.length > 120) text = text.slice(0, 117) + '...';
@@ -276,11 +322,25 @@ function parseMessage(line, channel) {
     if (role === 'user' && typeof msg.content !== 'string' && Array.isArray(msg.content)) {
       for (const block of msg.content) {
         if (block.type === 'text' && block.text) {
-          const labelMatch = block.text.match(/"conversation_label":\s*"([^"]+)"/);
-          if (labelMatch) {
-            threadLabel = labelMatch[1].replace(/\s*id:.*$/, '').replace(/\s*topic:.*$/, '').trim();
-            learnChannelName(channel, threadLabel);
-            break;
+          const labelKey = '"conversation_label":';
+          const li = block.text.indexOf(labelKey);
+          if (li >= 0) {
+            // Find the value between quotes after the key
+            const valStart = block.text.indexOf('"', li + labelKey.length);
+            if (valStart >= 0) {
+              const valEnd = block.text.indexOf('"', valStart + 1);
+              if (valEnd > valStart) {
+                let rawLabel = block.text.substring(valStart + 1, valEnd);
+                // Strip " id:..." and " topic:..." suffixes
+                const idIdx = rawLabel.indexOf(' id:');
+                if (idIdx >= 0) rawLabel = rawLabel.substring(0, idIdx);
+                const topIdx = rawLabel.indexOf(' topic:');
+                if (topIdx >= 0) rawLabel = rawLabel.substring(0, topIdx);
+                threadLabel = rawLabel.trim();
+                learnChannelName(channel, threadLabel);
+                break;
+              }
+            }
           }
         }
       }
@@ -931,21 +991,22 @@ function splitText(text, maxLen) {
   while (remaining.length > maxLen) {
     let cut = -1;
     // Try newline first
-    const nlIdx = remaining.lastIndexOf(String.fromCharCode(10), maxLen);
+    var nlIdx = remaining.lastIndexOf(String.fromCharCode(10), maxLen);
     if (nlIdx > maxLen * 0.3) { cut = nlIdx + 1; }
     else {
-      // Try sentence end (. ! ?) followed by space
-      const sentRe = /[.!?]\s/g;
-      let last = -1, m;
-      while ((m = sentRe.exec(remaining)) !== null) {
-        if (m.index + 2 <= maxLen) last = m.index + 2;
-        else break;
+      // Try sentence end (. ! ?) followed by space — pure string scan
+      var sentLast = -1;
+      for (var si = 0; si < maxLen && si < remaining.length - 1; si++) {
+        var ch = remaining[si];
+        if ((ch === '.' || ch === '!' || ch === '?') && remaining[si + 1] === ' ') {
+          sentLast = si + 2;
+        }
       }
-      if (last > maxLen * 0.3) cut = last;
+      if (sentLast > maxLen * 0.3) cut = sentLast;
     }
     // Fallback: cut at last space
     if (cut < 0) {
-      const spIdx = remaining.lastIndexOf(' ', maxLen);
+      var spIdx = remaining.lastIndexOf(' ', maxLen);
       cut = spIdx > maxLen * 0.3 ? spIdx + 1 : maxLen;
     }
     chunks.push(remaining.slice(0, cut).trim());
@@ -1122,8 +1183,13 @@ function updateTicker(items) {
       var matrix = computedStyle.transform || computedStyle.webkitTransform;
       var currentX = 0;
       if (matrix && matrix !== 'none') {
-        var vals = matrix.match(/matrix.*\((.+)\)/);
-        if (vals) { var parts = vals[1].split(','); currentX = parseFloat(parts[4]) || 0; }
+        // Extract translateX from matrix string without regex
+        var parenStart = matrix.indexOf('(');
+        var parenEnd = matrix.lastIndexOf(')');
+        if (parenStart > 0 && parenEnd > parenStart) {
+          var vals = matrix.substring(parenStart + 1, parenEnd).split(',');
+          currentX = parseFloat(vals[4]) || 0;
+        }
       }
       tc.innerHTML = html;
       var dur = Math.max(300, items.length * 40);
