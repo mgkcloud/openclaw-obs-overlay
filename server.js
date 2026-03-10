@@ -352,10 +352,16 @@ const HTML = `<!DOCTYPE html>
   /* ===== FEED: bottom-right, mixed terminal lines + iOS bubbles ===== */
   #feed {
     position: fixed; bottom: 16px; right: 16px;
-    width: 52%; max-height: 70vh;
-    display: flex; flex-direction: column; justify-content: flex-end;
+    width: 52%; max-height: 80vh;
+    display: flex; flex-direction: column;
     overflow-y: auto; overflow-x: hidden;
     scrollbar-width: none;
+    scroll-behavior: smooth;
+  }
+  #feed::-webkit-scrollbar { display: none; }
+  #feedInner {
+    display: flex; flex-direction: column; justify-content: flex-end;
+    min-height: 100%;
   }
   #feed::-webkit-scrollbar { display: none; }
 
@@ -387,35 +393,12 @@ const HTML = `<!DOCTYPE html>
     max-width: 520px;
   }
 
-  /* Long bubble: Twitch-style auto-scroll with top+bottom fade */
+  /* Bubble wrap — no per-bubble scroll, just natural height */
   .imsg-bubble-wrap {
     position: relative;
-    max-height: 180px;
-    overflow: hidden;
   }
-  .imsg-bubble-wrap.scrollable::before,
-  .imsg-bubble-wrap.scrollable::after {
-    content: ''; position: absolute; left: 0; right: 0; height: 28px;
-    pointer-events: none; z-index: 2;
-  }
-  .imsg-bubble-wrap.scrollable.sent-wrap::before { top:0; background: linear-gradient(to bottom, #007AFF 0%, transparent 100%); border-radius: 18px 18px 0 0; }
-  .imsg-bubble-wrap.scrollable.sent-wrap::after { bottom:0; background: linear-gradient(to top, #007AFF 0%, transparent 100%); border-radius: 0 0 18px 4px; }
-  .imsg-bubble-wrap.scrollable.recv-wrap::before { top:0; background: linear-gradient(to bottom, #E9E9EB 0%, transparent 100%); border-radius: 18px 18px 0 0; }
-  .imsg-bubble-wrap.scrollable.recv-wrap::after { bottom:0; background: linear-gradient(to top, #E9E9EB 0%, transparent 100%); border-radius: 0 0 4px 18px; }
 
   .imsg-bubble-inner {
-    max-height: 180px;
-    overflow: hidden;
-  }
-  /* When scrolling, the inner div animates translateY */
-  .imsg-bubble-inner.scrolling {
-    animation: bubbleScroll var(--scroll-duration, 12s) linear infinite;
-  }
-  @keyframes bubbleScroll {
-    0% { transform: translateY(0); }
-    10% { transform: translateY(0); }
-    90% { transform: translateY(var(--scroll-distance, -200px)); }
-    100% { transform: translateY(var(--scroll-distance, -200px)); }
   }
 
   /* User = iOS blue, right-aligned */
@@ -510,12 +493,13 @@ const HTML = `<!DOCTYPE html>
   <div id="petStats"><span id="petUptime">UP 0M</span> | <span id="petMsgs">0</span></div>
 </div>
 
-<div id="feed"></div>
+<div id="feed"><div id="feedInner"></div></div>
 <div id="crt"></div>
 
 <script>
 const feed = document.getElementById('feed');
-const MAX_VISIBLE = 24;
+const feedInner = document.getElementById('feedInner');
+const MAX_VISIBLE = 30;
 const FADE_AFTER = 90000;
 let total = 0;
 const t0 = Date.now();
@@ -601,6 +585,73 @@ function updateDash(data) {
 
 let lastBubbleRole = null;
 
+// Split long text into chunks at sentence/newline boundaries
+// Each chunk becomes its own bubble (nestled with .grouped)
+function splitText(text, maxLen) {
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let cut = -1;
+    // Try newline first
+    const nlIdx = remaining.lastIndexOf('\n', maxLen);
+    if (nlIdx > maxLen * 0.3) { cut = nlIdx + 1; }
+    else {
+      // Try sentence end (. ! ?) followed by space
+      const sentRe = /[.!?]\s/g;
+      let last = -1, m;
+      while ((m = sentRe.exec(remaining)) !== null) {
+        if (m.index + 2 <= maxLen) last = m.index + 2;
+        else break;
+      }
+      if (last > maxLen * 0.3) cut = last;
+    }
+    // Fallback: cut at last space
+    if (cut < 0) {
+      const spIdx = remaining.lastIndexOf(' ', maxLen);
+      cut = spIdx > maxLen * 0.3 ? spIdx + 1 : maxLen;
+    }
+    chunks.push(remaining.slice(0, cut).trim());
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+function makeBubble(text, isUser, ts, meta, isGrouped) {
+  const row = document.createElement('div');
+  row.className = 'imsg ' + (isUser ? 'sent' : 'recv') + (isGrouped ? ' grouped' : '');
+  row.dataset.ts = ts;
+
+  const col = document.createElement('div');
+  col.className = 'imsg-col';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'imsg-bubble-wrap';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'imsg-bubble';
+
+  const inner = document.createElement('div');
+  inner.className = 'imsg-bubble-inner';
+  inner.innerHTML = md(text);
+
+  bubble.appendChild(inner);
+  wrap.appendChild(bubble);
+  col.appendChild(wrap);
+
+  // Only show meta on the LAST bubble of a group
+  if (meta) {
+    const metaEl = document.createElement('div');
+    metaEl.className = 'imsg-meta';
+    metaEl.textContent = meta;
+    col.appendChild(metaEl);
+  }
+
+  row.appendChild(col);
+  return row;
+}
+
 function addEntry(evt) {
   if (evt.sentiment) setPet(evt.sentiment);
   total++;
@@ -608,69 +659,34 @@ function addEntry(evt) {
   document.getElementById('petMsgs').textContent = total;
 
   if (evt.primary) {
-    // === iOS iMessage bubble ===
     const isUser = evt.role === 'user';
-    const sameAsLast = lastBubbleRole === (isUser ? 'sent' : 'recv');
+    const side = isUser ? 'sent' : 'recv';
+    const sameAsLast = lastBubbleRole === side;
 
-    // If same sender as last bubble, mark the previous one as grouped
-    if (sameAsLast) {
-      const prevBubbles = feed.querySelectorAll('.imsg.' + (isUser ? 'sent' : 'recv'));
-      if (prevBubbles.length > 0) {
-        const prev = prevBubbles[prevBubbles.length - 1];
-        prev.classList.add('grouped');
-      }
-    }
-
-    const row = document.createElement('div');
-    row.className = 'imsg ' + (isUser ? 'sent' : 'recv');
-    row.dataset.ts = evt.ts || Date.now();
-
-    const col = document.createElement('div');
-    col.className = 'imsg-col';
-
-    // Bubble wrapper for scroll containment
-    const wrap = document.createElement('div');
-    wrap.className = 'imsg-bubble-wrap ' + (isUser ? 'sent-wrap' : 'recv-wrap');
-
-    const bubble = document.createElement('div');
-    bubble.className = 'imsg-bubble';
-
-    const inner = document.createElement('div');
-    inner.className = 'imsg-bubble-inner';
-    inner.innerHTML = md(evt.text);
-
-    bubble.appendChild(inner);
-    wrap.appendChild(bubble);
-
-    // Meta: compact thread + time
-    const meta = document.createElement('div');
-    meta.className = 'imsg-meta';
     const t = new Date(evt.timestamp);
     const timeStr = t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
     const who = isUser ? 'WILL' : 'GG';
     const thread = evt.threadLabel ? evt.threadLabel + ' · ' : (evt.channel ? evt.channel + ' · ' : '');
-    meta.textContent = thread + who + ' ' + timeStr;
+    const metaStr = thread + who + ' ' + timeStr;
 
-    col.appendChild(wrap);
-    col.appendChild(meta);
-    row.appendChild(col);
-    feed.appendChild(row);
+    const ts = evt.ts || Date.now();
+    // Split into chunks (~280 chars max per bubble)
+    const chunks = splitText(evt.text, 280);
 
-    // Check if bubble overflows and needs Twitch-style scroll
-    requestAnimationFrame(() => {
-      const scrollH = inner.scrollHeight;
-      const maxH = 180;
-      if (scrollH > maxH) {
-        wrap.classList.add('scrollable');
-        const distance = scrollH - maxH + 28; // scroll distance + fade padding
-        const duration = Math.max(6, Math.min(20, distance / 20)); // ~20px/sec, clamped
-        inner.style.setProperty('--scroll-distance', '-' + distance + 'px');
-        inner.style.setProperty('--scroll-duration', duration + 's');
-        inner.classList.add('scrolling');
-      }
-    });
+    // If continuing same sender, mark prev as grouped
+    if (sameAsLast) {
+      const prev = feedInner.querySelectorAll('.imsg.' + side);
+      if (prev.length > 0) prev[prev.length - 1].classList.add('grouped');
+    }
 
-    lastBubbleRole = isUser ? 'sent' : 'recv';
+    for (let i = 0; i < chunks.length; i++) {
+      const isLast = i === chunks.length - 1;
+      const isGroupedChunk = i > 0; // second+ chunk is always grouped
+      const b = makeBubble(chunks[i], isUser, ts, isLast ? metaStr : null, isGroupedChunk || (i === 0 && sameAsLast));
+      feedInner.appendChild(b);
+    }
+
+    lastBubbleRole = side;
   } else {
     // === Fallout terminal line ===
     const el = document.createElement('div');
@@ -679,20 +695,21 @@ function addEntry(evt) {
     const t = new Date(evt.timestamp);
     const ts = t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
     el.innerHTML = '<span class="tag">[' + ts + ']</span> <span class="ch">' + esc(evt.channel||'') + '</span> ' + esc(evt.text);
-    feed.appendChild(el);
-    // Don't reset lastBubbleRole: terminal entries don't break bubble groups
+    feedInner.appendChild(el);
   }
 
-  // Trim
-  while (feed.children.length > MAX_VISIBLE) feed.firstElementChild.remove();
-  // Auto-scroll to bottom
-  feed.scrollTop = feed.scrollHeight;
+  // Trim oldest
+  while (feedInner.children.length > MAX_VISIBLE) feedInner.firstElementChild.remove();
+  // Smooth scroll feed to bottom
+  requestAnimationFrame(() => {
+    feed.scrollTop = feed.scrollHeight;
+  });
 }
 
 // Fade old + uptime
 setInterval(() => {
   const now = Date.now();
-  for (const el of feed.children) {
+  for (const el of feedInner.children) {
     const age = now - parseInt(el.dataset.ts||'0');
     if (age > FADE_AFTER && !el.classList.contains('fading')) el.classList.add('fading');
     if (age > 180000 && el.classList.contains('fading')) el.remove();
