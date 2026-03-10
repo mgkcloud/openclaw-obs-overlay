@@ -111,9 +111,10 @@ function parseMessage(line, channel) {
 
     let text;
     if (isPrimary) {
-      text = textParts.join(' ');
+      text = textParts.join('\n');
       if (role === 'user') text = stripContextWrappers(text);
-      else text = text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+      // Preserve newlines for display - just collapse multiple blanks
+      text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     } else if (hasToolCall) {
       text = toolParts.join(', ');
     } else if (hasText) {
@@ -123,8 +124,13 @@ function parseMessage(line, channel) {
     }
 
     if (!text || text.length < 2) return null;
-    // Skip NO_REPLY and HEARTBEAT_OK
+    // Skip NO_REPLY, HEARTBEAT_OK, and internal runtime events
     if (/^(NO_REPLY|HEARTBEAT_OK)$/i.test(text.trim())) return null;
+    if (/OpenClaw runtime context|^\[.*?\] OpenClaw|Internal task completion|runtime-generated.*not user-authored/i.test(text)) return null;
+    // Skip heartbeat prompts, metadata-only messages
+    if (/^Read HEARTBEAT\.md|^\[.*GMT.*\]\s*$/i.test(text.trim())) return null;
+    // Skip messages that are just empty after context stripping
+    if (text.replace(/[\s\n]/g, '').length < 3) return null;
 
     if (!isPrimary && text.length > 120) text = text.slice(0, 117) + '...';
 
@@ -336,8 +342,10 @@ const HTML = `<!DOCTYPE html>
     position: fixed; bottom: 16px; right: 16px;
     width: 52%; max-height: 60%;
     display: flex; flex-direction: column; justify-content: flex-end;
-    overflow: hidden;
+    overflow-y: auto; overflow-x: hidden;
+    scrollbar-width: none; /* Firefox */
   }
+  #feed::-webkit-scrollbar { display: none; }
 
   /* Terminal entries (tool calls, tool results, system) */
   .entry {
@@ -364,6 +372,7 @@ const HTML = `<!DOCTYPE html>
     font-size: 14px; line-height: 1.35;
     word-wrap: break-word; white-space: pre-wrap;
     border-radius: 18px; position: relative;
+    max-width: 480px;
   }
 
   /* User = iOS blue, right-aligned */
@@ -556,6 +565,8 @@ function addEntry(evt) {
 
   // Trim
   while (feed.children.length > MAX_VISIBLE) feed.firstElementChild.remove();
+  // Auto-scroll to bottom
+  feed.scrollTop = feed.scrollHeight;
 }
 
 // Fade old + uptime
