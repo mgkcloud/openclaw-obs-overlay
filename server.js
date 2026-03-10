@@ -160,6 +160,9 @@ function parseMessage(line, channel) {
       // Preserve formatting (may become a bubble)
       text = textParts.join('\n');
       if (role === 'user') text = stripContextWrappers(text);
+      // Strip reply tags from assistant messages
+      text = text.replace(/\[\[\s*reply_to_current\s*\]\]/g, '');
+      text = text.replace(/\[\[\s*reply_to:\s*\d+\s*\]\]/g, '');
       text = text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     } else if (hasToolCall) {
       text = toolParts.join(', ');
