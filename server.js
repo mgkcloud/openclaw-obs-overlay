@@ -883,6 +883,7 @@ let total = 0;
 const t0 = Date.now();
 let lastBubbleSender = null; // Track for nestling
 let lastBubbleTime = null; // Track for time-gap breaks
+let lastEventChannel = null; // Track for terminal channel breaks
 
 const FACES = {
   idle:'🐙', happy:'🐙', ecstatic:'🐙', proud:'🐙', working:'🐙',
@@ -1050,6 +1051,24 @@ function makeBubble(text, isUser, ts, meta, isGrouped) {
   return row;
 }
 
+// Map session channels to friendly names
+var channelNames = {
+  't2672': 'TRADING',
+  't270': 'NEEDLEFREE',
+  't1698': 'AGENCY',
+  't1': 'GENERAL',
+  't85': 'ALERTS',
+  't302': 'RESEARCH'
+};
+function friendlyChannel(ch) {
+  if (!ch) return 'UNKNOWN';
+  var short = ch.indexOf('main/') === 0 ? ch.substring(5) : ch;
+  if (channelNames[short]) return channelNames[short];
+  // For non-topic sessions, show truncated hash
+  if (short.length > 8) return short.substring(0, 6);
+  return short;
+}
+
 function addEntry(evt) {
   if (evt.sentiment) setPet(evt.sentiment);
   total++;
@@ -1068,7 +1087,7 @@ function addEntry(evt) {
     var breakLabel = '';
     if (lastBubbleChannel && evtChannel !== lastBubbleChannel) {
       showBreak = true;
-      breakLabel = evtChannel.indexOf('main/') === 0 ? evtChannel.substring(5) : evtChannel;
+      breakLabel = friendlyChannel(evtChannel);
     } else if (lastBubbleTime && (evtTime - lastBubbleTime) > 300000) {
       // 5+ minute gap within same channel: show time break
       showBreak = true;
@@ -1110,6 +1129,18 @@ function addEntry(evt) {
     lastBubbleRole = side;
   } else {
     // === Fallout terminal line ===
+    const evtChannel = evt.channel || 'unknown';
+
+    // Channel break for terminal lines too
+    if (lastEventChannel && evtChannel !== lastEventChannel) {
+      var breakEl = document.createElement('div');
+      breakEl.className = 'thread-break';
+      var label = friendlyChannel(evtChannel);
+      breakEl.innerHTML = '<div class="thread-break-line"></div><span class="thread-break-label">' + esc(label) + '</span><div class="thread-break-line"></div>';
+      feedInner.appendChild(breakEl);
+    }
+    lastEventChannel = evtChannel;
+
     const el = document.createElement('div');
     el.className = 'entry';
     el.dataset.ts = evt.ts || Date.now();
