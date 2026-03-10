@@ -590,33 +590,8 @@ function setPet(e) {
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
-// Lightweight markdown → HTML (safe: escapes first, then applies formatting)
-function md(raw) {
-  let s = esc(raw);
-  // Code blocks
-  const cbRe = new RegExp('\x60\x60\x60[\\s\\S]*?\x60\x60\x60', 'g');
-  s = s.replace(cbRe, m => '<pre class="md-pre">' + m.slice(3,-3).trim() + '</pre>');
-  // Inline code
-  const icRe = new RegExp('\x60([^\x60\\n]+)\x60', 'g');
-  s = s.replace(icRe, '<code class="md-code">$1</code>');
-  // Bold: **text** or __text__
-  s = s.replace(/[*][*](.+?)[*][*]/g, '<strong>$1</strong>');
-  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
-  // Italic: *text* (after bold replaced, remaining single *)
-  s = s.replace(/[*]([^*]+)[*]/g, '<em>$1</em>');
-  // Strikethrough: ~~text~~
-  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
-  // Bullet lists
-  s = s.replace(/^([•*-]) (.+)$/gm, '<span class="md-li">$1 $2</span>');
-  // Numbered lists
-  s = s.replace(/^([0-9]+)[.] (.+)$/gm, '<span class="md-li">$1. $2</span>');
-  // Headers
-  s = s.replace(/^### (.+)$/gm, '<strong class="md-h3">$1</strong>');
-  s = s.replace(/^## (.+)$/gm, '<strong class="md-h2">$1</strong>');
-  s = s.replace(/^# (.+)$/gm, '<strong class="md-h1">$1</strong>');
-  // Emoji checkmarks: ✅ ❌ ⚠️ already render natively
-  return s;
-}
+// Plain text render: escape HTML, preserve whitespace. No regex.
+function md(raw) { return esc(raw); }
 function pnl(v) { return (v>=0?'+':'-') + '$' + Math.abs(v).toFixed(2); }
 function pc(v) { return v>=0?'ok':'warn'; }
 function wrBar(wr, w) {
