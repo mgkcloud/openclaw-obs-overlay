@@ -1,0 +1,13 @@
+{
+  "name": "openclaw-obs-overlay",
+  "version": "1.0.0",
+  "description": "OBS browser source overlay showing live OpenClaw activity",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --dev"
+  },
+  "dependencies": {
+    "chokidar": "^4.0.0"
+  }
+}
