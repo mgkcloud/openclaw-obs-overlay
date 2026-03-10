@@ -708,16 +708,15 @@ const HTML = `<!DOCTYPE html>
   .imsg.recv .imsg-meta { text-align: left; }
   .thread-break {
     display: flex; align-items: center; gap: 8px;
-    margin: 10px 0 6px 0; padding: 0 12px;
-    opacity: 0.4;
+    margin: 12px 0 8px 0; padding: 0 8px;
   }
   .thread-break-line {
-    flex: 1; height: 1px; background: #1a6e1a;
+    flex: 1; height: 1px; background: #33ff33; opacity: 0.5;
   }
   .thread-break-label {
     font-family: 'Share Tech Mono', monospace;
-    font-size: 9px; color: #1a6e1a;
-    white-space: nowrap; text-transform: uppercase; letter-spacing: 1px;
+    font-size: 10px; color: #33ff33; opacity: 0.7;
+    white-space: nowrap; text-transform: uppercase; letter-spacing: 1.5px;
   }
 
   @keyframes imsgPop {
@@ -883,6 +882,7 @@ const FADE_AFTER = 90000;
 let total = 0;
 const t0 = Date.now();
 let lastBubbleSender = null; // Track for nestling
+let lastBubbleTime = null; // Track for time-gap breaks
 
 const FACES = {
   idle:'🐙', happy:'🐙', ecstatic:'🐙', proud:'🐙', working:'🐙',
@@ -1062,17 +1062,28 @@ function addEntry(evt) {
     const sameAsLast = lastBubbleRole === side;
     const evtChannel = evt.channel || 'unknown';
 
-    // Thread break: insert subtle divider when conversation switches threads
+    // Thread break: insert divider when conversation switches threads OR time gap > 5 min
+    var evtTime = new Date(evt.timestamp).getTime();
+    var showBreak = false;
+    var breakLabel = '';
     if (lastBubbleChannel && evtChannel !== lastBubbleChannel) {
+      showBreak = true;
+      breakLabel = evtChannel.indexOf('main/') === 0 ? evtChannel.substring(5) : evtChannel;
+    } else if (lastBubbleTime && (evtTime - lastBubbleTime) > 300000) {
+      // 5+ minute gap within same channel: show time break
+      showBreak = true;
+      var gapT = new Date(evt.timestamp);
+      breakLabel = gapT.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
+    }
+    if (showBreak) {
       var breakEl = document.createElement('div');
       breakEl.className = 'thread-break';
-      // Clean up channel name for display
-      var label = evtChannel.indexOf('main/') === 0 ? evtChannel.substring(5) : evtChannel;
-      breakEl.innerHTML = '<div class="thread-break-line"></div><span class="thread-break-label">' + esc(label) + '</span><div class="thread-break-line"></div>';
+      breakEl.innerHTML = '<div class="thread-break-line"></div><span class="thread-break-label">' + esc(breakLabel) + '</span><div class="thread-break-line"></div>';
       feedInner.appendChild(breakEl);
-      lastBubbleRole = null; // Reset grouping across thread breaks
+      lastBubbleRole = null;
     }
     lastBubbleChannel = evtChannel;
+    lastBubbleTime = evtTime;
 
     const t = new Date(evt.timestamp);
     const timeStr = t.toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',hour12:false});
