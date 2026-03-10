@@ -222,36 +222,36 @@ function emitEvent(evt) {
 
 // promotePending removed: all assistant text is emitted immediately as primary
 
+function readNewData(filePath, channel) {
+  const offset = fileOffsets.get(filePath) || 0;
+  let stat;
+  try { stat = fs.statSync(filePath); } catch { return; }
+  if (stat.size <= offset) return;
+  // Sync read for speed (JSONL appends are small)
+  const fd = fs.openSync(filePath, 'r');
+  const buf = Buffer.alloc(stat.size - offset);
+  fs.readSync(fd, buf, 0, buf.length, offset);
+  fs.closeSync(fd);
+  fileOffsets.set(filePath, stat.size);
+  const lines = buf.toString('utf8').split('\n').filter(Boolean);
+  for (const line of lines) {
+    const evt = parseMessage(line, channel);
+    if (!evt) continue;
+    if (evt.primary || evt.assistantCandidate) {
+      evt.primary = true;
+      emitEvent(evt);
+    } else {
+      emitEvent(evt);
+    }
+  }
+}
+
 function tailFile(filePath) {
   const channel = inferChannel(filePath);
   try { fileOffsets.set(filePath, fs.statSync(filePath).size); } catch { fileOffsets.set(filePath, 0); }
   const watcher = fs.watch(filePath, (eventType) => {
     if (eventType !== 'change') return;
-    const offset = fileOffsets.get(filePath) || 0;
-    let stat;
-    try { stat = fs.statSync(filePath); } catch { return; }
-    if (stat.size <= offset) return;
-    const stream = fs.createReadStream(filePath, { start: offset, encoding: 'utf8' });
-    let buffer = '';
-    stream.on('data', (chunk) => { buffer += chunk; });
-    stream.on('end', () => {
-      fileOffsets.set(filePath, stat.size);
-      const lines = buffer.split('\n').filter(Boolean);
-      for (const line of lines) {
-        const evt = parseMessage(line, channel);
-        if (!evt) continue;
-
-        if (evt.primary || evt.assistantCandidate) {
-          // User message or assistant message with text: these are what Telegram
-          // actually displays. Emit as primary (bubble) immediately.
-          evt.primary = true;
-          emitEvent(evt);
-        } else {
-          // toolCall-only, toolResult, system: terminal feed
-          emitEvent(evt);
-        }
-      }
-    });
+    readNewData(filePath, channel);
   });
   watchers.set(filePath, watcher);
   console.log(`  >> ${channel}`);
@@ -276,6 +276,14 @@ function scanSessions() {
 const initial = scanSessions();
 setInterval(scanSessions, 30000);
 
+// Fast poll fallback: check watched files every 500ms for missed fs.watch events
+setInterval(() => {
+  for (const [filePath] of watchers) {
+    const channel = inferChannel(filePath);
+    readNewData(filePath, channel);
+  }
+}, 500);
+
 // Pet emotion decay
 setInterval(() => {
   if (Date.now() - petEmotionTs > 30000 && petEmotion !== 'idle' && petEmotion !== 'sleepy') {
@@ -297,8 +305,10 @@ const server = http.createServer((req, res) => {
     // Send initial state
     res.write(`event: emotion\ndata: ${JSON.stringify({ emotion: petEmotion })}\n\n`);
     if (dashboardData) res.write(`event: dashboard\ndata: ${JSON.stringify(dashboardData)}\n\n`);
-    // Replay recent events
-    for (const evt of recentEvents.slice(-20)) { sseSeq++; res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); }
+    // Replay only events from the last 60 seconds (not stale history)
+    const cutoff = Date.now() - 60000;
+    const fresh = recentEvents.filter(e => (e.ts || 0) > cutoff).slice(-20);
+    for (const evt of fresh) { sseSeq++; res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); }
 
     const h1 = (evt) => { sseSeq++; try { res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); } catch {} };
     const h2 = (d) => { try { res.write(`event: dashboard\ndata: ${JSON.stringify(d)}\n\n`); } catch {} };
