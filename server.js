@@ -453,6 +453,28 @@ const HTML = `<!DOCTYPE html>
     to { transform: translateY(0) scale(1); opacity:1; }
   }
 
+  /* Markdown inside bubbles */
+  .imsg-bubble strong { font-weight: 600; }
+  .imsg-bubble em { font-style: italic; }
+  .imsg-bubble del { text-decoration: line-through; opacity: 0.7; }
+  .imsg-bubble .md-code {
+    font-family: 'Share Tech Mono', 'SF Mono', monospace;
+    font-size: 13px; padding: 1px 4px; border-radius: 4px;
+  }
+  .imsg.recv .md-code { background: rgba(0,0,0,0.08); }
+  .imsg.sent .md-code { background: rgba(255,255,255,0.2); }
+  .imsg-bubble .md-pre {
+    font-family: 'Share Tech Mono', 'SF Mono', monospace;
+    font-size: 12px; padding: 4px 8px; border-radius: 6px;
+    margin: 4px 0; display: block; white-space: pre-wrap;
+  }
+  .imsg.recv .md-pre { background: rgba(0,0,0,0.06); }
+  .imsg.sent .md-pre { background: rgba(255,255,255,0.15); }
+  .imsg-bubble .md-li { display: block; padding-left: 8px; text-indent: -8px; }
+  .imsg-bubble .md-h1 { font-size: 16px; display: block; margin: 4px 0 2px; }
+  .imsg-bubble .md-h2 { font-size: 15px; display: block; margin: 3px 0 2px; }
+  .imsg-bubble .md-h3 { font-size: 14px; display: block; margin: 2px 0 1px; }
+
   /* Nestling: JS adds .grouped to consecutive same-sender bubbles */
   .imsg.grouped { margin-top: 1px; }
   .imsg.sent.grouped .imsg-bubble { border-top-right-radius: 6px; }
@@ -522,6 +544,34 @@ function setPet(e) {
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+
+// Lightweight markdown → HTML (safe: escapes first, then applies formatting)
+function md(raw) {
+  let s = esc(raw);
+  // Code blocks
+  const cbRe = new RegExp('\x60\x60\x60[\\s\\S]*?\x60\x60\x60', 'g');
+  s = s.replace(cbRe, m => '<pre class="md-pre">' + m.slice(3,-3).trim() + '</pre>');
+  // Inline code
+  const icRe = new RegExp('\x60([^\x60\\n]+)\x60', 'g');
+  s = s.replace(icRe, '<code class="md-code">$1</code>');
+  // Bold: **text** or __text__
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  // Italic: *text* or _text_ (but not inside words with underscores)
+  s = s.replace(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '<em>$1</em>');
+  // Strikethrough: ~~text~~
+  s = s.replace(/~~(.+?)~~/g, '<del>$1</del>');
+  // Bullet lists: lines starting with - or *
+  s = s.replace(/^([•\-\*])\s+(.+)$/gm, '<span class="md-li">$1 $2</span>');
+  // Numbered lists: lines starting with 1. 2. etc
+  s = s.replace(/^(\d+)\.\s+(.+)$/gm, '<span class="md-li">$1. $2</span>');
+  // Headers: # ## ### (render as bold, slightly bigger)
+  s = s.replace(/^#{3}\s+(.+)$/gm, '<strong class="md-h3">$1</strong>');
+  s = s.replace(/^#{2}\s+(.+)$/gm, '<strong class="md-h2">$1</strong>');
+  s = s.replace(/^#{1}\s+(.+)$/gm, '<strong class="md-h1">$1</strong>');
+  // Emoji checkmarks: ✅ ❌ ⚠️ already render natively
+  return s;
+}
 function pnl(v) { return (v>=0?'+':'-') + '$' + Math.abs(v).toFixed(2); }
 function pc(v) { return v>=0?'ok':'warn'; }
 function wrBar(wr, w) {
@@ -587,7 +637,7 @@ function addEntry(evt) {
 
     const inner = document.createElement('div');
     inner.className = 'imsg-bubble-inner';
-    inner.textContent = evt.text;
+    inner.innerHTML = md(evt.text);
 
     bubble.appendChild(inner);
     wrap.appendChild(bubble);
