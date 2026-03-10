@@ -29,7 +29,7 @@ function loadEdgeSignals() {
   try {
     const data = fs.readFileSync(EDGE_SIGNALS_FILE, 'utf8');
     const lines = data.trim().split('\n').filter(Boolean);
-    for (const line of lines.slice(-MAX_TICKER)) {
+    for (const line of lines.slice(-MAX_TICKER).reverse()) {
       try {
         const sig = JSON.parse(line);
         const item = {
@@ -75,8 +75,8 @@ try {
             price: sig.market_price || null,
             ts: sig.timestamp || new Date().toISOString()
           };
-          tickerItems.push(item);
-          if (tickerItems.length > MAX_TICKER) tickerItems.shift();
+          tickerItems.unshift(item);
+          if (tickerItems.length > MAX_TICKER) tickerItems.pop();
           bus.emit('ticker', tickerItems);
         } catch {}
       }
@@ -1078,14 +1078,38 @@ function updateTicker(items) {
     html += '<span class="ti-sep">///</span>';
     html += '</span>';
   }
-  tc.innerHTML = html;
-  // Adjust scroll speed based on content: ~15px/sec (very slow crawl)
-  var dur = Math.max(300, items.length * 40);
-  tc.style.setProperty('--ticker-duration', dur + 's');
-  // Reset animation
-  tc.style.animation = 'none';
-  tc.offsetHeight;
-  tc.style.animation = '';
+  // Compare with existing items to avoid full rebuild (prevents scroll reset)
+  var existingCount = tc.children.length;
+  if (existingCount === 0) {
+    // First load: set everything
+    tc.innerHTML = html;
+    var dur = Math.max(300, items.length * 40);
+    tc.style.setProperty('--ticker-duration', dur + 's');
+  } else {
+    // Incremental: check if first item changed (new signal arrived)
+    var firstNew = items[0];
+    var firstOldEl = tc.querySelector('.ticker-item');
+    var firstOldHeadline = firstOldEl ? (firstOldEl.querySelector('.ti-headline') || {}).textContent : '';
+    if (firstNew && (firstNew.headline || '') !== firstOldHeadline) {
+      // New items at front: rebuild but preserve scroll position
+      var computedStyle = window.getComputedStyle(tc);
+      var matrix = computedStyle.transform || computedStyle.webkitTransform;
+      var currentX = 0;
+      if (matrix && matrix !== 'none') {
+        var vals = matrix.match(/matrix.*\((.+)\)/);
+        if (vals) { var parts = vals[1].split(','); currentX = parseFloat(parts[4]) || 0; }
+      }
+      tc.innerHTML = html;
+      var dur = Math.max(300, items.length * 40);
+      tc.style.setProperty('--ticker-duration', dur + 's');
+      // Maintain approximate scroll position
+      tc.style.animation = 'none';
+      tc.style.transform = 'translateX(' + currentX + 'px)';
+      tc.offsetHeight;
+      tc.style.transform = '';
+      tc.style.animation = '';
+    }
+  }
 }
 
 // ===== SSE with reconnect =====
