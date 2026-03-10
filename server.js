@@ -305,9 +305,8 @@ const server = http.createServer((req, res) => {
     // Send initial state
     res.write(`event: emotion\ndata: ${JSON.stringify({ emotion: petEmotion })}\n\n`);
     if (dashboardData) res.write(`event: dashboard\ndata: ${JSON.stringify(dashboardData)}\n\n`);
-    // Replay only events from the last 60 seconds (not stale history)
-    const cutoff = Date.now() - 60000;
-    const fresh = recentEvents.filter(e => (e.ts || 0) > cutoff).slice(-20);
+    // Replay last 50 events (keeps feed populated even after quiet periods)
+    const fresh = recentEvents.slice(-50);
     for (const evt of fresh) { sseSeq++; res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); }
 
     const h1 = (evt) => { sseSeq++; try { res.write(`id: ${sseSeq}\ndata: ${JSON.stringify(evt)}\n\n`); } catch {} };
