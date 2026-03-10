@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+# ghcs - GitHub Code Search CLI
+# Usage: ghcs "query" [--limit N] [--lang css] [--fetch]
+#
+# Examples:
+#   ghcs "imessage bubble css tail"
+#   ghcs "chat bubble svg path" --lang html --limit 10
+#   ghcs "websocket reconnect" --lang javascript --fetch
+#
+# --fetch: also download the first result's raw file content
+
+set -euo pipefail
+
+TOKEN=$(grep oauth_token ~/.config/gh/hosts.yml 2>/dev/null | awk '{print $2}')
+if [[ -z "$TOKEN" ]]; then
+  echo "Error: No GitHub token found. Run 'gh auth login' first." >&2
+  exit 1
+fi
+
+QUERY=""
+LIMIT=8
+LANG=""
+FETCH=false
+SORT=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --limit) LIMIT="$2"; shift 2 ;;
+    --lang) LANG="$2"; shift 2 ;;
+    --fetch) FETCH=true; shift ;;
+    --sort) SORT="$2"; shift 2 ;;
+    --help|-h)
+      echo "ghcs - GitHub Code Search"
+      echo "Usage: ghcs \"query\" [--limit N] [--lang css] [--fetch] [--sort indexed]"
+      exit 0
+      ;;
+    *) QUERY="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$QUERY" ]]; then
+  echo "Usage: ghcs \"search query\" [--limit N] [--lang css]" >&2
+  exit 1
+fi
+
+# Build query with language filter
+FULL_Q="$QUERY"
+[[ -n "$LANG" ]] && FULL_Q="$FULL_Q language:$LANG"
+
+# URL encode
+ENCODED_Q=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$FULL_Q'))")
+
+URL="https://api.github.com/search/code?q=${ENCODED_Q}&per_page=${LIMIT}"
+[[ -n "$SORT" ]] && URL="${URL}&sort=${SORT}"
+
+RESPONSE=$(curl -s \
+  -H "Authorization: token $TOKEN" \
+  -H "Accept: application/vnd.github.text-match+json" \
+  "$URL")
+
+python3 -c "
+import json, sys
+
+d = json.loads('''$( echo "$RESPONSE" | python3 -c "import sys,json; print(json.dumps(json.loads(sys.stdin.read())))" )''')
+
+total = d.get('total_count', 0)
+items = d.get('items', [])
+print(f'Found {total} results (showing {len(items)})')
+print()
+
+for i, item in enumerate(items):
+    repo = item['repository']['full_name']
+    path = item['path']
+    url = item['html_url']
+    score = item.get('score', 0)
+    
+    print(f'[{i+1}] {repo} :: {path}')
+    print(f'    {url}')
+    
+    for tm in item.get('text_matches', []):
+        frag = tm.get('fragment', '').replace('\n', ' ').strip()
+        if len(frag) > 180:
+            frag = frag[:177] + '...'
+        if frag:
+            print(f'    >>> {frag}')
+    print()
+" 2>/dev/null || echo "Parse error. Raw response:" && echo "$RESPONSE" | python3 -m json.tool 2>/dev/null | head -40
+
+# If --fetch, grab the first result's raw content
+if $FETCH; then
+  FIRST_URL=$(echo "$RESPONSE" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+items = d.get('items', [])
+if items:
+    repo = items[0]['repository']['full_name']
+    path = items[0]['path']
+    ref = items[0].get('sha', 'HEAD')
+    print(f'https://raw.githubusercontent.com/{repo}/{ref}/{path}')
+" 2>/dev/null)
+  
+  if [[ -n "$FIRST_URL" ]]; then
+    echo "========================================="
+    echo "FETCHING: $FIRST_URL"
+    echo "========================================="
+    curl -sL "$FIRST_URL" | head -100
+  fi
+fi

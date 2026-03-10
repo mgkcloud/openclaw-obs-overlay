@@ -2,8 +2,9 @@
 /**
  * OpenClaw OBS Overlay Server v4
  * 
- * Fallout terminal aesthetic with iMessage-style chat bubbles for user/assistant.
- * Green monochrome. No borders on system text. Bubbles only for conversation.
+ * Fallout terminal green monochrome + iMessage bubbles for user/assistant.
+ * SVG tails work on transparent OBS backgrounds.
+ * System/tool/cron messages stay as terminal text.
  */
 
 const fs = require('fs');
@@ -67,7 +68,6 @@ function parseMessage(line, channel) {
     if (!text) return null;
 
     const isPrimary = (role === 'user' || role === 'assistant') && !hasToolCall;
-    // Show full messages for primary, truncate secondary
     if (!isPrimary && text.length > 120) text = text.slice(0, 117) + '...';
 
     const roleTag = { user: 'USER', assistant: 'GG', toolCall: 'TOOL', toolResult: 'RES', system: 'SYS' }[role] || 'MSG';
@@ -230,7 +230,7 @@ const OVERLAY_HTML = `<!DOCTYPE html>
     overflow: hidden;
   }
 
-  /* --- Secondary entries (tools, system, cron) --- */
+  /* --- Terminal lines (tools, system, cron) --- */
   .entry {
     padding: 1px 0;
     animation: fadeIn 0.3s ease-out;
@@ -246,96 +246,78 @@ const OVERLAY_HTML = `<!DOCTYPE html>
   .entry .msg-text { color: #1a7a1a; }
   .entry.fading { opacity: 0; }
 
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-  /* --- Primary entries: iMessage-style bubbles --- */
-  .bubble-wrap {
+  /* ===== iMESSAGE BUBBLES ===== */
+
+  .bubble-row {
     display: flex;
-    margin: 4px 0;
-    animation: bubbleIn 0.35s cubic-bezier(0.22, 1, 0.36, 1);
-    opacity: 1;
+    margin: 3px 0;
+    animation: bubbleSlide 0.35s cubic-bezier(0.22, 1, 0.36, 1);
     transition: opacity 3s ease-out;
   }
-  .bubble-wrap.fading { opacity: 0; }
+  .bubble-row.fading { opacity: 0; }
 
-  /* User bubbles: right-aligned, tail on right */
-  .bubble-wrap.from-user {
-    justify-content: flex-end;
-  }
+  .bubble-row.from-user { justify-content: flex-end; }
+  .bubble-row.from-assistant { justify-content: flex-start; }
 
-  /* Assistant bubbles: left-aligned, tail on left */
-  .bubble-wrap.from-assistant {
-    justify-content: flex-start;
-  }
+  .bubble-col { max-width: 82%; position: relative; }
 
+  /* The bubble itself */
   .bubble {
     position: relative;
-    max-width: 80%;
-    padding: 8px 12px;
+    padding: 8px 14px;
     font-size: 13px;
     line-height: 1.4;
     word-wrap: break-word;
     white-space: normal;
-    border-radius: 16px;
+    border-radius: 18px;
+    font-family: 'Share Tech Mono', monospace;
   }
 
-  /* User bubble: brighter green bg, dark text */
-  .bubble.user-bubble {
+  /* User: bright green bubble, dark text */
+  .bubble.sent {
     background: #33ff33;
     color: #0a0f0a;
     border-bottom-right-radius: 4px;
+    margin-right: 8px;
   }
 
-  /* Assistant bubble: dark green bg, green text */
-  .bubble.assistant-bubble {
+  /* Assistant: dark green bubble, green text */
+  .bubble.received {
     background: #0d2b0d;
     color: #33ff33;
     border-bottom-left-radius: 4px;
+    margin-left: 8px;
   }
 
-  /* iMessage tail - user (right side) using inline SVG via url() */
-  .bubble.user-bubble::after {
-    content: '';
+  /* SVG tails - works on transparent backgrounds */
+  .tail {
     position: absolute;
-    bottom: -1px;
-    right: -10px;
+    bottom: 0;
     width: 12px;
-    height: 18px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='18'%3E%3Cpath d='M0,0 C0,0 0,14 10,18 C5,14 2,8 2,0 Z' fill='%2333ff33'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
+    height: 20px;
   }
 
-  /* iMessage tail - assistant (left side) */
-  .bubble.assistant-bubble::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: -10px;
-    width: 12px;
-    height: 18px;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='18'%3E%3Cpath d='M12,0 C12,0 12,14 2,18 C7,14 10,8 10,0 Z' fill='%230d2b0d'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
+  .tail-sent {
+    right: -4px;
+  }
+
+  .tail-received {
+    left: -4px;
   }
 
   .bubble-meta {
     font-size: 9px;
-    margin-top: 2px;
-    padding: 0 4px;
-  }
-  .bubble-wrap.from-user .bubble-meta {
-    text-align: right;
+    margin-top: 1px;
     color: #1a6e1a;
+    font-family: 'Share Tech Mono', monospace;
   }
-  .bubble-wrap.from-assistant .bubble-meta {
-    text-align: left;
-    color: #1a6e1a;
-  }
+  .bubble-row.from-user .bubble-meta { text-align: right; padding-right: 10px; }
+  .bubble-row.from-assistant .bubble-meta { text-align: left; padding-left: 10px; }
 
-  @keyframes bubbleIn {
-    from { transform: translateY(12px) scale(0.95); opacity: 0; }
+  @keyframes bubbleSlide {
+    from { transform: translateY(10px) scale(0.96); opacity: 0; }
     to { transform: translateY(0) scale(1); opacity: 1; }
   }
 
@@ -350,12 +332,7 @@ const OVERLAY_HTML = `<!DOCTYPE html>
       rgba(0, 0, 0, 0.04) 2px, rgba(0, 0, 0, 0.04) 4px
     );
   }
-
-  @keyframes flicker {
-    0% { opacity: 0.98; }
-    50% { opacity: 1; }
-    100% { opacity: 0.98; }
-  }
+  @keyframes flicker { 0% { opacity: 0.98; } 50% { opacity: 1; } 100% { opacity: 0.98; } }
   body { animation: flicker 4s infinite; }
 </style>
 </head>
@@ -367,17 +344,27 @@ const OVERLAY_HTML = `<!DOCTYPE html>
   <div id="eventCount">0 EVENTS</div>
 </div>
 
-<div id="dashboard">
-  <div id="dashContent">AWAITING DATA...</div>
-</div>
+<div id="dashboard"><div id="dashContent">AWAITING DATA...</div></div>
 
 <div id="bottomLeft">
-  <div id="sessionCount">-- SESSIONS</div>
+  <div id="sessionCount"></div>
   <div id="uptimeDisplay">UPTIME 0M</div>
 </div>
 
 <div id="feed"></div>
 <div id="crt"></div>
+
+<!-- SVG tail templates (hidden, cloned via JS) -->
+<svg style="display:none">
+  <!-- Sent tail (right side, bright green) - iMessage curve -->
+  <symbol id="tail-sent" viewBox="0 0 12 20">
+    <path d="M0,0 C0,10 4,16 12,20 C8,16 4,10 2,0 Z" fill="#33ff33"/>
+  </symbol>
+  <!-- Received tail (left side, dark green) - mirrored -->
+  <symbol id="tail-received" viewBox="0 0 12 20">
+    <path d="M12,0 C12,10 8,16 0,20 C4,16 8,10 10,0 Z" fill="#0d2b0d"/>
+  </symbol>
+</svg>
 
 <script>
 const feed = document.getElementById('feed');
@@ -400,8 +387,7 @@ function updateDashboard(data) {
   const t = data.generated_at ? new Date(data.generated_at) : new Date();
   const utc = t.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', timeZone:'UTC' });
 
-  let h = '';
-  h += 'FUND OVERVIEW ' + utc + ' UTC<br>';
+  let h = 'FUND OVERVIEW ' + utc + ' UTC<br>';
   h += '<div class="fund-pnl-big ' + pc(f.pnl) + '">' + pnl(f.pnl) + '</div>';
   h += f.trades + 'T ' + (f.win_rate||0).toFixed(1) + '%WR | BE: ' + (f.breakeven_wr||0).toFixed(1) + '%<br>';
   h += '24H: <span class="' + pc(f.daily_pnl||0) + '">' + pnl(f.daily_pnl||0) + '</span> (' + (f.daily_trades||0) + 'T)<br>';
@@ -421,49 +407,62 @@ function updateDashboard(data) {
     if (b.daily_pnl) h += ' 24h:<span class="' + pc(b.daily_pnl) + '">' + pnl(b.daily_pnl) + '</span>';
     h += '</div>';
   }
-
   document.getElementById('dashContent').innerHTML = h;
+}
+
+function makeTailSvg(type) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('tail', 'tail-' + type);
+  svg.setAttribute('viewBox', '0 0 12 20');
+  svg.setAttribute('width', '12');
+  svg.setAttribute('height', '20');
+
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', '#tail-' + type);
+  svg.appendChild(use);
+  return svg;
 }
 
 function addEntry(evt) {
   if (evt.primary) {
-    // iMessage bubble
-    const wrap = document.createElement('div');
     const isUser = evt.role === 'user';
-    wrap.className = 'bubble-wrap ' + (isUser ? 'from-user' : 'from-assistant');
-    wrap.dataset.ts = evt.ts || Date.now();
+    const row = document.createElement('div');
+    row.className = 'bubble-row ' + (isUser ? 'from-user' : 'from-assistant');
+    row.dataset.ts = evt.ts || Date.now();
 
     const col = document.createElement('div');
+    col.className = 'bubble-col';
 
     const bubble = document.createElement('div');
-    bubble.className = 'bubble ' + (isUser ? 'user-bubble' : 'assistant-bubble');
+    bubble.className = 'bubble ' + (isUser ? 'sent' : 'received');
     bubble.textContent = evt.text;
+
+    // Add SVG tail
+    const tail = makeTailSvg(isUser ? 'sent' : 'received');
+    bubble.appendChild(tail);
 
     const meta = document.createElement('div');
     meta.className = 'bubble-meta';
-    const t = new Date(evt.timestamp);
-    meta.textContent = (isUser ? 'USER' : 'GG') + ' ' + t.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: false });
+    const ts = new Date(evt.timestamp);
+    meta.textContent = (isUser ? 'USER' : 'GG') + ' ' + ts.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12:false });
 
     col.appendChild(bubble);
     col.appendChild(meta);
-    wrap.appendChild(col);
-    feed.appendChild(wrap);
+    row.appendChild(col);
+    feed.appendChild(row);
   } else {
-    // Terminal-style secondary line
     const el = document.createElement('div');
     el.className = 'entry';
     el.dataset.ts = evt.ts || Date.now();
-
-    const t = new Date(evt.timestamp);
-    const ts = t.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12: false });
-    el.innerHTML = '<span class="tag">[' + ts + ' ' + esc(evt.roleTag || '?') + ']</span> <span class="msg-text">' + esc(evt.text) + '</span>';
+    const ts = new Date(evt.timestamp);
+    const t = ts.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false });
+    el.innerHTML = '<span class="tag">[' + t + ' ' + esc(evt.roleTag||'?') + ']</span> <span class="msg-text">' + esc(evt.text) + '</span>';
     feed.appendChild(el);
   }
 
   total++;
   document.getElementById('eventCount').textContent = total + ' EVENTS';
 
-  // Trim overflow
   while (feed.children.length > MAX_VISIBLE) {
     const old = feed.firstElementChild;
     old.style.opacity = '0';
@@ -471,7 +470,6 @@ function addEntry(evt) {
   }
 }
 
-// Fade + cleanup
 setInterval(() => {
   const now = Date.now();
   for (const el of feed.children) {
@@ -479,27 +477,18 @@ setInterval(() => {
     if (age > FADE_MS && !el.classList.contains('fading')) el.classList.add('fading');
   }
   for (const el of [...feed.children]) {
-    if (now - parseInt(el.dataset.ts || '0') > 120000 && el.classList.contains('fading')) el.remove();
+    if (now - parseInt(el.dataset.ts||'0') > 120000 && el.classList.contains('fading')) el.remove();
   }
   const m = Math.floor((now - t0) / 60000);
   document.getElementById('uptimeDisplay').textContent = 'UPTIME ' + (m < 60 ? m + 'M' : Math.floor(m/60) + 'H' + (m%60) + 'M');
 }, 5000);
 
-// SSE
 function connect() {
   const es = new EventSource('/events');
-  es.onopen = () => {
-    document.getElementById('connStatus').textContent = 'CONNECTED';
-    document.getElementById('connStatus').style.color = '#33ff33';
-  };
+  es.onopen = () => { document.getElementById('connStatus').textContent = 'CONNECTED'; document.getElementById('connStatus').style.color = '#33ff33'; };
   es.onmessage = (e) => { try { addEntry(JSON.parse(e.data)); } catch {} };
   es.addEventListener('dashboard', (e) => { try { updateDashboard(JSON.parse(e.data)); } catch {} });
-  es.onerror = () => {
-    document.getElementById('connStatus').textContent = 'DISCONNECTED';
-    document.getElementById('connStatus').style.color = '#ff5555';
-    es.close();
-    setTimeout(connect, 3000);
-  };
+  es.onerror = () => { document.getElementById('connStatus').textContent = 'DISCONNECTED'; document.getElementById('connStatus').style.color = '#ff5555'; es.close(); setTimeout(connect, 3000); };
 }
 connect();
 </script>
