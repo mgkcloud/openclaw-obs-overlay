@@ -627,8 +627,27 @@ function setPet(e) {
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
-// Plain text render: escape HTML, preserve whitespace. No regex.
-function md(raw) { return esc(raw); }
+// Markdown-lite: uses new RegExp() with safe patterns for template literal context
+function md(raw) {
+  var s = esc(raw);
+  // Bold: **text**
+  s = s.replace(new RegExp('[*][*](.+?)[*][*]', 'g'), '<strong>$1</strong>');
+  // Markdown links: [text](url) -> shortened clickable
+  s = s.replace(new RegExp('\\\\[([^\\\\]]+)\\\\]\\\\(([^)]+)\\\\)', 'g'), function(_, t, u) {
+    return '<a href="' + u + '" target="_blank" style="color:#0af">' + t + '</a>';
+  });
+  // Bare URLs -> shortened clickable
+  s = s.replace(new RegExp('(https?://[^ <"\']+)', 'g'), function(u) {
+    var short = u.length > 50 ? u.substring(0, 47) + '...' : u;
+    return '<a href="' + u + '" target="_blank" style="color:#0af">' + short + '</a>';
+  });
+  // Inline code (use hex for backtick to avoid template literal issues)
+  s = s.replace(new RegExp(String.fromCharCode(96) + '([^' + String.fromCharCode(96) + ']+)' + String.fromCharCode(96), 'g'),
+    '<code style="background:rgba(255,255,255,0.1);padding:0 3px;border-radius:2px">$1</code>');
+  // Bullet lists: lines starting with - or *
+  s = s.replace(new RegExp('^([*-]) (.+)$', 'gm'), '<span style="display:block;padding-left:12px">$1 $2</span>');
+  return s;
+}
 function pnl(v) { return (v>=0?'+':'-') + '$' + Math.abs(v).toFixed(2); }
 function pc(v) { return v>=0?'ok':'warn'; }
 function wrBar(wr, w) {
