@@ -506,7 +506,7 @@ const HTML = `<!DOCTYPE html>
 
   /* ===== PET: bottom-left, above ticker ===== */
   #petContainer {
-    position: fixed; bottom: 52px; left: 16px;
+    position: fixed; bottom: 38px; left: 16px;
     width: 120px; display: flex; flex-direction: column;
     align-items: center; justify-content: flex-end;
   }
@@ -550,7 +550,7 @@ const HTML = `<!DOCTYPE html>
 
   /* ===== FEED: bottom-right, mixed terminal lines + iOS bubbles ===== */
   #feed {
-    position: fixed; bottom: 52px; right: 16px;
+    position: fixed; bottom: 38px; right: 16px;
     width: 52%; max-height: 80vh;
     display: flex; flex-direction: column;
     overflow-y: auto; overflow-x: hidden;
@@ -667,42 +667,40 @@ const HTML = `<!DOCTYPE html>
   /* Fading for old entries */
   .fading { opacity: 0.15; transition: opacity 5s ease-out; }
 
-  /* ===== BREAKING NEWS TICKER ===== */
+  /* ===== SIGNAL INTEL TICKER ===== */
   #tickerBar {
     position: fixed; bottom: 0; left: 0; right: 0;
-    height: 36px; z-index: 90;
-    display: flex; align-items: stretch;
+    height: 22px; z-index: 99;
+    display: flex; flex-direction: column;
     font-family: 'Share Tech Mono', 'Courier New', monospace;
     overflow: hidden;
   }
   #tickerLabel {
-    background: #cc0000;
-    color: #fff;
-    font-size: 11px;
+    background: rgba(0,0,0,0.95);
+    color: #661111;
+    font-size: 7px;
     font-weight: bold;
-    letter-spacing: 1.5px;
-    padding: 0 14px;
+    letter-spacing: 2px;
+    padding: 0 6px;
+    height: 8px;
+    line-height: 8px;
     display: flex; align-items: center;
-    white-space: nowrap;
-    text-shadow: 0 0 4px rgba(255,0,0,0.5);
+    border-bottom: 1px solid #220000;
     flex-shrink: 0;
-    z-index: 2;
   }
   #tickerLabel .dot {
     display: inline-block;
-    width: 8px; height: 8px;
-    background: #ff3333;
+    width: 3px; height: 3px;
+    background: #cc0000;
     border-radius: 50%;
-    margin-right: 8px;
-    animation: dotPulse 1.5s ease-in-out infinite;
-    box-shadow: 0 0 6px rgba(255,50,50,0.8);
+    margin-right: 5px;
+    animation: dotPulse 2s ease-in-out infinite;
   }
-  @keyframes dotPulse { 0%,100%{opacity:1;box-shadow:0 0 6px rgba(255,50,50,0.8)} 50%{opacity:0.4;box-shadow:0 0 2px rgba(255,50,50,0.3)} }
+  @keyframes dotPulse { 0%,100%{opacity:1} 50%{opacity:0.2} }
 
   #tickerTrack {
     flex: 1;
-    background: rgba(0,0,0,0.85);
-    border-top: 1px solid #cc0000;
+    background: rgba(0,0,0,0.9);
     overflow: hidden;
     position: relative;
   }
@@ -711,50 +709,46 @@ const HTML = `<!DOCTYPE html>
     align-items: center;
     height: 100%;
     white-space: nowrap;
-    animation: tickerScroll var(--ticker-duration, 60s) linear infinite;
+    animation: tickerScroll var(--ticker-duration, 180s) linear infinite;
     padding-left: 100%;
   }
   @keyframes tickerScroll {
     0% { transform: translateX(0); }
     100% { transform: translateX(-100%); }
   }
-  #tickerContent:hover { animation-play-state: paused; }
 
   .ticker-item {
     display: inline-flex;
     align-items: center;
-    padding: 0 32px 0 0;
+    padding: 0 20px 0 0;
     height: 100%;
-    font-size: 13px;
+    font-size: 10px;
     color: #33ff33;
   }
   .ticker-item .ti-sev {
-    color: #cc0000;
-    font-size: 10px;
-    margin-right: 6px;
-    letter-spacing: 0.5px;
+    display: none;
   }
   .ticker-item .ti-src {
-    color: #1a8c1a;
-    margin-right: 8px;
-    font-size: 11px;
+    color: #1a6e1a;
+    margin-right: 5px;
+    font-size: 8px;
   }
   .ticker-item .ti-headline {
     color: #33ff33;
   }
   .ticker-item .ti-market {
     color: #0af;
-    margin-left: 8px;
-    font-size: 11px;
+    margin-left: 5px;
+    font-size: 9px;
   }
   .ticker-item .ti-sep {
-    color: #cc0000;
-    margin: 0 16px;
-    font-size: 16px;
+    color: #1a3a1a;
+    margin: 0 10px;
+    font-size: 10px;
   }
   .ticker-empty {
     color: #1a6e1a;
-    font-size: 12px;
+    font-size: 9px;
     padding: 0 20px;
     display: inline-flex;
     align-items: center;
@@ -789,7 +783,7 @@ const HTML = `<!DOCTYPE html>
 <div id="feed"><div id="feedInner"></div></div>
 
 <div id="tickerBar">
-  <div id="tickerLabel"><span class="dot"></span>DEXTER SIGNAL INTEL</div>
+  <div id="tickerLabel"><span class="dot"></span>SIGNAL INTEL</div>
   <div id="tickerTrack"><div id="tickerContent"><span class="ticker-empty">AWAITING SIGNALS...</span></div></div>
 </div>
 
@@ -1073,7 +1067,7 @@ function updateTicker(items) {
   }
   tc.innerHTML = html;
   // Adjust scroll speed based on content: ~80px/sec
-  var dur = Math.max(30, items.length * 5);
+  var dur = Math.max(90, items.length * 8);
   tc.style.setProperty('--ticker-duration', dur + 's');
   // Reset animation
   tc.style.animation = 'none';
